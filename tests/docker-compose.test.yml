@@ -1,0 +1,28 @@
+services:
+  ts-local-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.ts-client
+    container_name: ts-local-test
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - TS_AUTHKEY=${TS_TEST_CLIENT_AUTHKEY}
+      - TS_HOSTNAME=vpn-local-test
+      - TS_EXTRA_ARGS=--login-server=${HEADSCALE_URL} --accept-routes --reset
+      - TS_USERSPACE=false
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_ACCEPT_DNS=false
+      # Passed to test script
+      - VPN_GATE_NODE=vpn-gate
+      - VPS_PUBLIC_IP=${VPS_PUBLIC_IP}
+      - COMPANY_DOMAIN=${COMPANY_DOMAIN}
+      - COMPANY_CIDRS=${COMPANY_CIDRS}
+      - L2TP_CHECK_IP=${L2TP_CHECK_IP}
+      - HEADSCALE_URL=${HEADSCALE_URL}
+    volumes:
+      - ts-local-test-state:/var/lib/tailscale
+    restart: "no"
+
+volumes:
+  ts-local-test-state:

@@ -1,0 +1,26 @@
+# Secrets - NEVER commit
+.env
+*.conf
+
+# Docker volumes
+data/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# PoC artifacts
+poc-l2tp/.env
+
+# Test reports with real data (regenerate from tests)
+docs/executive-test-report-*.md
+
+# Claude-mem session files
+claude-mem-*.md

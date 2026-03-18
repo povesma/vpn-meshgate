@@ -1,0 +1,18 @@
+FROM tailscale/tailscale:latest
+
+# Install test tools
+RUN apk add --no-cache \
+    bind-tools \
+    curl \
+    wget \
+    iputils \
+    iproute2 \
+    jq \
+    bash \
+    coreutils
+
+COPY e2e-test.sh /usr/local/bin/e2e-test.sh
+RUN chmod +x /usr/local/bin/e2e-test.sh
+
+# Default: run tailscaled and keep alive
+# Tests are executed via: docker exec ts-local-test e2e-test.sh

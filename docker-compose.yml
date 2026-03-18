@@ -1,0 +1,190 @@
+services:
+  gluetun:
+    image: qmcgaw/gluetun
+    container_name: gluetun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - VPN_SERVICE_PROVIDER=mullvad
+      - VPN_TYPE=wireguard
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
+      - WIREGUARD_ADDRESSES=${WIREGUARD_ADDRESSES}
+      - SERVER_COUNTRIES=${MULLVAD_COUNTRY}
+      - FIREWALL_OUTBOUND_SUBNETS=172.29.0.0/24
+      - DNS_UPSTREAM_RESOLVER_TYPE=plain
+      - DNS_UPSTREAM_PLAIN_ADDRESSES=172.29.0.30:53
+      - DNS_REBINDING_PROTECTION_EXEMPT_HOSTNAMES=*.${COMPANY_DOMAIN}
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+    networks:
+      bridge_vpn:
+        ipv4_address: 172.29.0.10
+    volumes:
+      - ./gluetun/post-rules.txt:/iptables/post-rules.txt
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:9999/v1/publicip/ip"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  route-init:
+    build:
+      context: ./gluetun
+      dockerfile: Dockerfile.route-init
+    container_name: route-init
+    network_mode: service:gluetun
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - COMPANY_CIDRS=${COMPANY_CIDRS}
+    depends_on:
+      gluetun:
+        condition: service_healthy
+      l2tp-vpn:
+        condition: service_started
+    restart: unless-stopped
+
+  tailscale:
+    image: tailscale/tailscale
+    container_name: tailscale
+    network_mode: service:gluetun
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_HOSTNAME=${TS_HOSTNAME}
+      - TS_EXTRA_ARGS=--advertise-exit-node --advertise-routes=${COMPANY_CIDRS} --login-server=${HEADSCALE_URL}
+      - TS_USERSPACE=false
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_ACCEPT_DNS=false
+    volumes:
+      - ts-state:/var/lib/tailscale
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    restart: unless-stopped
+
+  l2tp-vpn:
+    build: ./l2tp
+    container_name: l2tp-vpn
+    privileged: true
+    devices:
+      - /dev/ppp:/dev/ppp
+    environment:
+      - L2TP_SERVER=${L2TP_SERVER}
+      - L2TP_USERNAME=${L2TP_USERNAME}
+      - L2TP_PASSWORD=${L2TP_PASSWORD}
+      - L2TP_PSK=${L2TP_PSK}
+      - COMPANY_CIDRS=${COMPANY_CIDRS}
+    networks:
+      bridge_vpn:
+        ipv4_address: 172.29.0.20
+    volumes:
+      - shared-config:/shared
+    healthcheck:
+      test: ["CMD", "sh", "-c", "ip link show ppp0"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  dnsmasq:
+    build: ./dns
+    container_name: dnsmasq
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - COMPANY_DOMAIN=${COMPANY_DOMAIN}
+      - COMPANY_CIDRS=${COMPANY_CIDRS}
+    networks:
+      bridge_vpn:
+        ipv4_address: 172.29.0.30
+    volumes:
+      - shared-config:/shared
+    healthcheck:
+      test: ["CMD", "sh", "-c", "dig @127.0.0.1 example.com +short +time=2 +tries=1 >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+    depends_on:
+      - l2tp-vpn
+    restart: unless-stopped
+
+  ntfy:
+    image: binwiederhier/ntfy
+    container_name: ntfy
+    command: serve
+    networks:
+      bridge_vpn:
+        ipv4_address: 172.29.0.40
+    volumes:
+      - ntfy-cache:/var/cache/ntfy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:80/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  healthcheck:
+    build: ./healthcheck
+    container_name: healthcheck
+    network_mode: service:gluetun
+    environment:
+      - VPS_PUBLIC_IP=${VPS_PUBLIC_IP}
+      - L2TP_CHECK_IP=${L2TP_CHECK_IP}
+      - CHECK_INTERVAL=${CHECK_INTERVAL:-30}
+      - NTFY_TOPIC=${NTFY_TOPIC:-vpn-alerts}
+    depends_on:
+      gluetun:
+        condition: service_healthy
+      ntfy:
+        condition: service_started
+    restart: unless-stopped
+
+  ts-test-client:
+    image: tailscale/tailscale
+    container_name: ts-test-client
+    cap_add:
+      - NET_ADMIN
+    dns:
+      - 172.29.0.10
+    environment:
+      - TS_AUTHKEY=${TS_TEST_CLIENT_AUTHKEY}
+      - TS_HOSTNAME=vpn-test-client
+      - TS_EXTRA_ARGS=--login-server=${HEADSCALE_URL} --accept-routes --reset
+      - TS_USERSPACE=false
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_ACCEPT_DNS=false
+    volumes:
+      - ts-test-state:/var/lib/tailscale
+    networks:
+      bridge_vpn:
+        ipv4_address: 172.29.0.50
+    depends_on:
+      gluetun:
+        condition: service_healthy
+      dnsmasq:
+        condition: service_healthy
+    restart: "no"
+    profiles:
+      - test
+
+networks:
+  bridge_vpn:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.29.0.0/24
+
+volumes:
+  ts-state:
+  ts-test-state:
+  ntfy-cache:
+  shared-config:

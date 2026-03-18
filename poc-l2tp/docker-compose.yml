@@ -1,0 +1,15 @@
+services:
+  l2tp:
+    build: .
+    container_name: poc-l2tp
+    privileged: true
+    devices:
+      - /dev/ppp:/dev/ppp
+    environment:
+      - L2TP_SERVER=${L2TP_SERVER}
+      - L2TP_USERNAME=${L2TP_USERNAME}
+      - L2TP_PASSWORD=${L2TP_PASSWORD}
+      - L2TP_PSK=${L2TP_PSK}
+      - COMPANY_CIDRS=${COMPANY_CIDRS:-}
+      - L2TP_CHECK_IP=${L2TP_CHECK_IP:-}
+    restart: "no"
