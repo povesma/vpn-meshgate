@@ -36,35 +36,37 @@ the L2TP container over a shared Docker bridge network.
 │  │         Shared Network Namespace              │  │
 │  │         (owned by gluetun)                    │  │
 │  │                                               │  │
-│  │  ┌─────────────┐    ┌──────────────────────┐  │  │
-│  │  │  tailscale  │    │       gluetun        │  │  │
-│  │  │             │    │                      │  │  │
-│  │  │ exit node   │    │ wg0 ──► Mullvad     │  │  │
-│  │  │ ts0 iface   │    │ eth0 ──► bridge_vpn │  │  │
-│  │  │             │    │                      │  │  │
-│  │  └─────────────┘    │ routing rules:       │  │  │
-│  │                     │ COMPANY_CIDRS → L2TP │  │  │
-│  │                     │ 0.0.0.0/0    → wg0   │  │  │
-│  │                     └──────────────────────┘  │  │
+│  │  ┌─────────────┐  ┌──────────────────────┐  │  │
+│  │  │  tailscale  │  │       gluetun        │  │  │
+│  │  │             │  │                      │  │  │
+│  │  │ exit node   │  │ wg0 ──► Mullvad     │  │  │
+│  │  │ ts0 iface   │  │ eth0 ──► bridge_vpn │  │  │
+│  │  │             │  │                      │  │  │
+│  │  └─────────────┘  │ routing rules:       │  │  │
+│  │                    │ COMPANY_CIDRS → L2TP │  │  │
+│  │  ┌─────────────┐  │ 0.0.0.0/0    → wg0   │  │  │
+│  │  │    ntfy     │  └──────────────────────┘  │  │
+│  │  │ :80 push    │                            │  │
+│  │  │ notifications│                           │  │
+│  │  └─────────────┘  ┌──────────────────────┐  │  │
+│  │                    │   healthcheck        │  │  │
+│  │                    │ checks tunnels       │  │  │
+│  │                    │ → POST localhost:80  │  │  │
+│  │                    └──────────────────────┘  │  │
 │  └──────────────────────────┬────────────────────┘  │
 │                             │ eth0 (bridge_vpn)     │
 │                             │                       │
 │  ┌──────────────────────────┼────────────────────┐  │
 │  │            Docker network: bridge_vpn         │  │
 │  │                          │                    │  │
-│  │  ┌──────────────┐  ┌────┴─────┐  ┌────────┐  │  │
-│  │  │   l2tp-vpn   │  │  dnsmasq │  │  ntfy  │  │  │
-│  │  │              │  │          │  │        │  │  │
-│  │  │ ppp0 ──►     │  │ :53 DNS  │  │ :2586  │  │  │
-│  │  │  company VPN │  │ split    │  │ push   │  │  │
-│  │  │ eth0 ──►     │  │ routing  │  │ notif  │  │  │
-│  │  │  bridge_vpn  │  │          │  │        │  │  │
-│  │  └──────────────┘  └──────────┘  └────────┘  │  │
-│  └───────────────────────────────────────────────┘  │
-│                                                     │
-│  ┌───────────────────────────────────────────────┐  │
-│  │              healthcheck (cron)               │  │
-│  │  checks tunnel status → POST to ntfy         │  │
+│  │  ┌──────────────┐  ┌────┴─────┐              │  │
+│  │  │   l2tp-vpn   │  │  dnsmasq │              │  │
+│  │  │              │  │          │              │  │
+│  │  │ ppp0 ──►     │  │ :53 DNS  │              │  │
+│  │  │  company VPN │  │ split    │              │  │
+│  │  │ eth0 ──►     │  │ routing  │              │  │
+│  │  │  bridge_vpn  │  │          │              │  │
+│  │  └──────────────┘  └──────────┘              │  │
 │  └───────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────┘
 ```
@@ -77,8 +79,8 @@ the L2TP container over a shared Docker bridge network.
 | `tailscale`   | `tailscale/tailscale`          | `service:gluetun`      | Exit node on Headscale            |
 | `l2tp-vpn`    | custom Alpine + strongSwan     | `bridge_vpn`           | L2TP/IPsec to company VPN         |
 | `dnsmasq`     | custom Alpine + dnsmasq        | `bridge_vpn`           | Split DNS resolver                |
-| `ntfy`        | `binwiederhier/ntfy`           | `bridge_vpn`           | Push notification server          |
-| `healthcheck` | custom Alpine + curl + script  | `bridge_vpn`           | Tunnel health monitoring          |
+| `ntfy`        | `binwiederhier/ntfy`           | `service:gluetun`      | Push notification server          |
+| `healthcheck` | custom Alpine + curl + script  | `service:gluetun`      | Tunnel health monitoring          |
 
 ### Integration Points
 
@@ -90,10 +92,11 @@ the L2TP container over a shared Docker bridge network.
 - **Company VPN**: L2TP container connects using strongSwan
   (IPsec) + xl2tpd (L2TP) with PSK + username/password from
   `.env`.
-- **ntfy**: Health checker POSTs to ntfy over the Docker
-  bridge network. User subscribes from phone/desktop via
-  Tailscale IP or ntfy port exposed on the Tailscale
-  interface.
+- **ntfy**: Runs in gluetun's network namespace
+  (`network_mode: service:gluetun`), making it directly
+  reachable via Tailscale MagicDNS at
+  `http://<TS_HOSTNAME>/vpn-alerts` (port 80). Health
+  checker POSTs to `http://127.0.0.1:80` (same namespace).
 
 ## Detailed Design
 
@@ -157,8 +160,8 @@ sequenceDiagram
     DNS->>DNS: load split DNS config
     Note over DNS: COMPANY_DOMAIN → L2TP's PPP DNS<br/>everything else → Mullvad DNS
 
-    DC->>NT: start (bridge_vpn)
-    DC->>HC: start (bridge_vpn)
+    DC->>NT: start (joins gluetun namespace)
+    DC->>HC: start (joins gluetun namespace)
     HC->>HC: begin 30s health check loop
 ```
 
@@ -236,29 +239,29 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant HC as healthcheck
+    participant HC as healthcheck (gluetun ns)
     participant GL as gluetun
     participant L2 as l2tp-vpn
-    participant NT as ntfy
+    participant NT as ntfy (gluetun ns)
     participant Phone as User's Phone
 
     loop every 30 seconds
-        HC->>GL: curl http://gluetun:9999/v1/publicip/ip
+        HC->>GL: curl http://127.0.0.1:9999/v1/publicip/ip
         alt Mullvad tunnel healthy
             GL-->>HC: {"ip": "185.x.x.x"} (Mullvad IP)
             HC->>HC: OK — IP is not VPS public IP
         else Mullvad tunnel down
             GL-->>HC: VPS public IP or timeout
-            HC->>NT: POST /vpn-alerts "Mullvad tunnel DOWN"
-            NT->>Phone: push notification
+            HC->>NT: POST http://127.0.0.1:80/vpn-alerts
+            NT->>Phone: push notification (via Tailscale)
         end
 
         HC->>L2: ping 10.11.0.1 (or configured check IP)
         alt L2TP tunnel healthy
             L2-->>HC: pong
         else L2TP tunnel down
-            HC->>NT: POST /vpn-alerts "L2TP tunnel DOWN"
-            NT->>Phone: push notification
+            HC->>NT: POST http://127.0.0.1:80/vpn-alerts
+            NT->>Phone: push notification (via Tailscale)
         end
     end
 ```
@@ -418,18 +421,27 @@ alert via ntfy).
 - Serve push notifications to subscribed clients
 
 **Configuration:** Minimal. Default ntfy config is
-sufficient. The topic name is hardcoded to `vpn-alerts`.
+sufficient. The topic name comes from `NTFY_TOPIC` env var
+(default: `vpn-alerts`).
 
-**Access from Mac:** ntfy is accessible via the Tailscale
-network at `http://<exit-node-tailscale-ip>:2586`. The
-user subscribes to the `vpn-alerts` topic using the ntfy
-app or web UI.
+**Network:** `network_mode: service:gluetun`. ntfy shares
+gluetun's network namespace where Tailscale also lives.
+This means ntfy listens on port 80 inside the same
+namespace as the Tailscale interface, making it directly
+reachable via Tailscale MagicDNS. Requires an iptables
+INPUT rule in `gluetun/post-rules.txt` to allow incoming
+TCP on port 80 from `tailscale0` (gluetun's default INPUT
+policy is DROP).
 
-**Port exposure:** ntfy's port 2586 is published on the
-gluetun container (since tailscale shares its namespace),
-making it accessible via the Tailscale IP. Alternatively,
-ntfy connects to the bridge_vpn network and the
-healthcheck reaches it there.
+**Access from phone/Mac:** Subscribe in the ntfy app to:
+`http://<TS_HOSTNAME>/<NTFY_TOPIC>` (e.g.,
+`http://vpn-router/vpn-alerts`). Works from any device on
+the Tailscale network. No ports exposed on the public VPS
+IP.
+
+**Internal access:** The healthcheck container (also in
+gluetun's namespace) reaches ntfy at
+`http://127.0.0.1:80`.
 
 #### healthcheck (Monitoring)
 
@@ -457,13 +469,13 @@ if timeout:
 
 # Notify only on state change
 if state_changed:
-    curl -d "Tunnel X is DOWN/UP" ntfy:2586/vpn-alerts
+    curl -d "Tunnel X is DOWN/UP" 127.0.0.1:80/vpn-alerts
 ```
 
 **Environment variables:**
 - `VPS_PUBLIC_IP` — to detect Mullvad failure
 - `L2TP_CHECK_IP` — company IP to ping (e.g., `10.11.0.1`)
-- `NTFY_URL` — ntfy endpoint (default: `http://ntfy:2586`)
+- `NTFY_URL` — ntfy endpoint (default: `http://127.0.0.1:80`)
 - `CHECK_INTERVAL` — seconds between checks (default: 30)
 
 ### State Management
@@ -534,8 +546,9 @@ components use:
 
 - **gluetun API** (built-in): `GET :9999/v1/publicip/ip`
   for health checks
-- **ntfy API** (built-in): `POST :2586/<topic>` with
-  plaintext body for notifications
+- **ntfy API** (built-in): `POST :80/<topic>` with
+  plaintext body for notifications (localhost in shared
+  gluetun namespace)
 - **File-based IPC**: `/shared/company-dns-ip` for DNS
   server discovery between L2TP and dnsmasq containers
 
@@ -686,11 +699,12 @@ split DNS need with zero overhead.
    Need to verify the timing and implement a robust wait
    mechanism for dnsmasq.
 
-3. **ntfy access via Tailscale**: Since ntfy runs on the
-   bridge network (not in gluetun's namespace), we need to
-   verify that it's reachable from the Mac via the Tailscale
-   exit node. May need to expose ntfy's port on gluetun's
-   namespace or use Tailscale's `--advertise-routes`.
+3. ~~**ntfy access via Tailscale**~~: **RESOLVED** — ntfy
+   moved to `network_mode: service:gluetun`, sharing the
+   Tailscale network namespace. Reachable via MagicDNS at
+   `http://<TS_HOSTNAME>/<NTFY_TOPIC>` (e.g.,
+   `http://vpn-router/vpn-alerts`). No ports exposed on
+   public VPS IP.
 
 4. ~~**Kill switch vs fail-open**~~: **RESOLVED** — fail-closed
    (gluetun kill switch) for v1. Fail-open is a future

@@ -120,9 +120,7 @@ services:
     image: binwiederhier/ntfy
     container_name: ntfy
     command: serve
-    networks:
-      bridge_vpn:
-        ipv4_address: 172.29.0.40
+    network_mode: service:gluetun
     volumes:
       - ntfy-cache:/var/cache/ntfy
     healthcheck:
@@ -130,6 +128,9 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+    depends_on:
+      gluetun:
+        condition: service_healthy
     restart: unless-stopped
 
   healthcheck:
@@ -145,7 +146,26 @@ services:
       gluetun:
         condition: service_healthy
       ntfy:
-        condition: service_started
+        condition: service_healthy
+    restart: unless-stopped
+
+  vpn-bot:
+    build: ./bot
+    container_name: vpn-bot
+    network_mode: service:gluetun
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - NTFY_CMD_TOPIC=${NTFY_CMD_TOPIC:-vpn-cmd}
+      - NTFY_TOPIC=${NTFY_TOPIC:-vpn-alerts}
+      - VPS_PUBLIC_IP=${VPS_PUBLIC_IP}
+      - L2TP_CHECK_IP=${L2TP_CHECK_IP}
+      - COMPANY_DOMAIN=${COMPANY_DOMAIN}
+    depends_on:
+      gluetun:
+        condition: service_healthy
+      ntfy:
+        condition: service_healthy
     restart: unless-stopped
 
   ts-test-client:

@@ -1,7 +1,7 @@
 #!/bin/sh
 
 INTERVAL="${CHECK_INTERVAL:-30}"
-NTFY_URL="http://172.29.0.40:80"
+NTFY_URL="http://127.0.0.1:80"
 TOPIC="${NTFY_TOPIC:-vpn-alerts}"
 IP_CHECK_URL="https://ifconfig.me"
 STATE_FILE="/tmp/vpn-health-state"

@@ -16,13 +16,14 @@ and traffic is automatically split:
 │                                                   │
 │  ┌─────────────── Shared Namespace ────────────┐  │
 │  │  gluetun (Mullvad WG)  +  tailscale (exit)  │  │
-│  │  + route-init (ip routes for company CIDRs) │  │
+│  │  + route-init  +  ntfy (:80)  + healthcheck │  │
+│  │  + vpn-bot (remote control)                 │  │
 │  └──────────────────┬──────────────────────────┘  │
-│                     │ bridge_vpn (172.20.0.0/24)  │
-│  ┌──────────┐  ┌────┴────┐  ┌──────┐  ┌───────┐  │
-│  │ l2tp-vpn │  │ dnsmasq │  │ ntfy │  │ health│  │
-│  │  .0.20   │  │  .0.30  │  │ .0.40│  │ check │  │
-│  └──────────┘  └─────────┘  └──────┘  └───────┘  │
+│                     │ bridge_vpn (172.29.0.0/24)  │
+│  ┌──────────┐  ┌────┴────┐                        │
+│  │ l2tp-vpn │  │ dnsmasq │                        │
+│  │  .0.20   │  │  .0.30  │                        │
+│  └──────────┘  └─────────┘                        │
 └──────────────────────────────────────────────────┘
 ```
 
@@ -87,14 +88,53 @@ dig <host>.<COMPANY_DOMAIN>   # Should resolve via company DNS
 ## Notifications
 
 The stack includes ntfy for push notifications when VPN tunnels go
-down or recover. Subscribe from your phone or browser:
+down or recover. ntfy runs in the Tailscale network namespace, so
+it's reachable via MagicDNS from any device on your tailnet.
 
-```
-http://<tailscale-exit-node-ip>:80/vpn-alerts
-```
+1. Install the ntfy app ([ntfy.sh](https://ntfy.sh)) on your phone
+2. Add a subscription with the server URL and topic:
+   ```
+   http://<TS_HOSTNAME>/vpn-alerts
+   ```
+   For example, if `TS_HOSTNAME=vpn-router`:
+   ```
+   http://vpn-router/vpn-alerts
+   ```
+3. The topic name matches your `NTFY_TOPIC` env var (default:
+   `vpn-alerts`)
 
-Install the ntfy app ([ntfy.sh](https://ntfy.sh)) and subscribe to
-the topic matching your `NTFY_TOPIC` env var.
+## Remote Control
+
+The stack includes a `vpn-bot` container that listens for commands on a
+separate ntfy topic, allowing you to manage VPN tunnels from your phone.
+
+1. Subscribe to the command topic in the ntfy app:
+   ```
+   http://<TS_HOSTNAME>/vpn-cmd
+   ```
+2. Send commands and receive responses all within the `vpn-cmd` topic.
+
+**Available commands:**
+
+| Command | Description |
+|---|---|
+| `ping` | Check bot is alive (returns uptime) |
+| `status` | Show Mullvad and Company VPN tunnel status |
+| `ip` | Show current public exit IP |
+| `restart company` | Restart L2TP tunnel |
+| `restart mullvad` | Restart Mullvad tunnel (requires `confirm`) |
+| `disable company` | Stop L2TP permanently (survives reboots; SSH to re-enable) |
+| `dns test` | Test split DNS resolution |
+| `help` | List available commands |
+
+Restarting Mullvad requires a two-step confirmation: send `restart mullvad`,
+then `confirm` within 30 seconds.
+
+To re-enable Company VPN after `disable company`, SSH to the VPS and run:
+```bash
+docker update --restart=unless-stopped l2tp-vpn
+docker start l2tp-vpn
+```
 
 ## Troubleshooting
 
@@ -131,3 +171,4 @@ Key variables:
 | `MULLVAD_COUNTRY` | Mullvad server country |
 | `VPS_PUBLIC_IP` | Your VPS public IP (for health check) |
 | `NTFY_TOPIC` | ntfy notification topic name |
+| `NTFY_CMD_TOPIC` | ntfy command topic for remote control |

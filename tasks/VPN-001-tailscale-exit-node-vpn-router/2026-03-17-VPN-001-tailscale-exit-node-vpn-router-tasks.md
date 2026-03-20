@@ -180,3 +180,26 @@
     company network broken when using vpn-gate exit node.
     Rebuilding tests with local Mac container.
   - [~] 8.6 ~~Reboot test~~ — DISABLED (unreliable)
+
+- [X] 9.0 **User Story:** As a developer, I want to
+  subscribe to VPN alerts on my phone using the Tailscale
+  hostname (e.g., `http://vpn-router/vpn-alerts`) so that
+  I get push notifications without remembering IP addresses
+  (REQ-08) [3/3]
+  - [X] 9.1 Move ntfy to gluetun's network namespace:
+    change `docker-compose.yml` ntfy service from
+    `networks: bridge_vpn` to
+    `network_mode: service:gluetun`, add
+    `depends_on: gluetun: condition: service_healthy`,
+    keep existing healthcheck. Remove ntfy's static IP
+    (`172.29.0.40`).
+  - [X] 9.2 Update `healthcheck/check.sh`: change
+    `NTFY_URL` from `http://172.29.0.40:80` to
+    `http://127.0.0.1:80` (both now share gluetun's
+    namespace). Update healthcheck `depends_on` for ntfy
+    to `condition: service_healthy`.
+  - [X] 9.3 Verify: deploy to VPS, confirm ntfy is
+    reachable from phone at
+    `http://<TS_HOSTNAME>/<NTFY_TOPIC>`, confirm
+    healthcheck can still post notifications, confirm
+    ntfy healthcheck passes in `docker ps`.
