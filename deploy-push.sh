@@ -20,7 +20,7 @@ set -euo pipefail
 # PROTECTED_TRACKED: in git; synced by default. Skipping adds --exclude.
 #PROTECTED_GITIGNORED=(".env" "backend/.env")
 #PROTECTED_TRACKED=("config.yaml" "docker-compose.yml")
-PROTECTED_GITIGNORED=(".env")
+PROTECTED_GITIGNORED=(".env" "gluetun/auth/config.toml")
 PROTECTED_TRACKED=()
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

@@ -23,6 +23,7 @@ services:
         ipv4_address: 172.29.0.10
     volumes:
       - ./gluetun/post-rules.txt:/iptables/post-rules.txt
+      - ./gluetun/auth:/gluetun/auth:ro
     healthcheck:
       test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:9999/v1/publicip/ip"]
       interval: 30s
@@ -149,18 +150,39 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  mullvad-switcher:
+    build: ./switcher
+    container_name: mullvad-switcher
+    networks:
+      bridge_vpn:
+        ipv4_address: 172.29.0.40
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - switcher-data:/data
+      - ${COMPOSE_PROJECT_DIR:-.}:${COMPOSE_PROJECT_DIR:-/project}:ro
+    environment:
+      - NTFY_CMD_TOPIC=${NTFY_CMD_TOPIC:-vpn-cmd}
+      - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-vpn}
+      - COMPOSE_PROJECT_DIR=${COMPOSE_PROJECT_DIR:-/home/povesma/vpn}
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    restart: unless-stopped
+
   vpn-bot:
     build: ./bot
     container_name: vpn-bot
     network_mode: service:gluetun
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - switcher-data:/data
     environment:
       - NTFY_CMD_TOPIC=${NTFY_CMD_TOPIC:-vpn-cmd}
       - NTFY_TOPIC=${NTFY_TOPIC:-vpn-alerts}
       - VPS_PUBLIC_IP=${VPS_PUBLIC_IP}
       - L2TP_CHECK_IP=${L2TP_CHECK_IP}
       - COMPANY_DOMAIN=${COMPANY_DOMAIN}
+      - GLUETUN_API_KEY=${GLUETUN_API_KEY}
     depends_on:
       gluetun:
         condition: service_healthy
@@ -208,3 +230,4 @@ volumes:
   ts-test-state:
   ntfy-cache:
   shared-config:
+  switcher-data:

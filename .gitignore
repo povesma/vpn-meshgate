@@ -1,6 +1,7 @@
 # Secrets - NEVER commit
 .env
 *.conf
+gluetun/auth/config.toml
 
 # Docker volumes
 data/

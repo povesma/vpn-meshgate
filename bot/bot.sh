@@ -4,6 +4,7 @@ NTFY_URL="http://127.0.0.1:80"
 CMD_TOPIC="${NTFY_CMD_TOPIC:-vpn-cmd}"
 ALERT_TOPIC="${NTFY_TOPIC:-vpn-alerts}"
 IP_CHECK_URL="https://ifconfig.me"
+SWITCH_REQUEST="/data/switch-request"
 CONFIRM_FILE="/tmp/vpn-bot-confirm-mullvad"
 RATE_FILE="/tmp/vpn-bot-last-cmd"
 
@@ -43,6 +44,33 @@ cleanup_confirm() {
             rm -f "${CONFIRM_FILE}"
         fi
     fi
+}
+
+mullvad_country_name() {
+    case "$1" in
+        us) echo "United States" ;;
+        uk) echo "United Kingdom" ;;
+        nl) echo "Netherlands" ;;
+        de) echo "Germany" ;;
+        fr) echo "France" ;;
+        ch) echo "Switzerland" ;;
+        se) echo "Sweden" ;;
+        fi) echo "Finland" ;;
+        be) echo "Belgium" ;;
+        cy) echo "Cyprus" ;;
+        ca) echo "Canada" ;;
+        jp) echo "Japan" ;;
+        sg) echo "Singapore" ;;
+        th) echo "Thailand" ;;
+        id) echo "Indonesia" ;;
+        il) echo "Israel" ;;
+        tr) echo "Turkey" ;;
+        al) echo "Albania" ;;
+        ua) echo "Ukraine" ;;
+        za) echo "South Africa" ;;
+        ng) echo "Nigeria" ;;
+        *)  echo "" ;;
+    esac
 }
 
 cmd_ping() {
@@ -92,11 +120,23 @@ cmd_help() {
     reply "VPN Bot Commands" "ping - check bot is alive
 status - VPN tunnel status
 ip - show public exit IP
+mullvad <cc> - switch exit country (mullvad list for codes)
 restart company - restart L2TP tunnel
 restart mullvad - restart Mullvad (requires confirm)
 disable company - stop L2TP permanently (SSH to re-enable)
 dns test - test DNS resolution
 help - show this message" "low"
+}
+
+cmd_mullvad_list() {
+    reply "Mullvad Countries" "us=United States  uk=United Kingdom  nl=Netherlands
+de=Germany        fr=France          ch=Switzerland
+se=Sweden         fi=Finland         be=Belgium
+cy=Cyprus         ca=Canada          jp=Japan
+sg=Singapore      th=Thailand        id=Indonesia
+il=Israel         tr=Turkey          al=Albania
+ua=Ukraine        za=South Africa    ng=Nigeria
+Send: mullvad <code>" "low"
 }
 
 cmd_restart_company() {
@@ -153,6 +193,29 @@ cmd_dns_test() {
 Public (example.com): ${public_result}"
 }
 
+cmd_mullvad_switch() {
+    local keyword="$1"
+    local country
+    country=$(mullvad_country_name "${keyword}")
+    if [ -z "${country}" ]; then
+        reply "Unknown Country" "Unknown country '${keyword}'. Send 'mullvad list' for available codes."
+        return
+    fi
+
+    if [ ! -d /data ]; then
+        reply "Switch Failed" "Switcher data volume not mounted. Check mullvad-switcher container." "urgent"
+        return
+    fi
+
+    if [ -f "${SWITCH_REQUEST}" ]; then
+        reply "Switch Busy" "A country switch is already in progress. Please wait." "default"
+        return
+    fi
+
+    echo "${country}" > "${SWITCH_REQUEST}"
+    reply "Switch Queued" "🕐 Switching to ${country}... mullvad-switcher will report back." "high"
+}
+
 cmd_disable_company() {
     docker stop l2tp-vpn >/dev/null 2>&1
     docker update --restart=no l2tp-vpn >/dev/null 2>&1
@@ -186,6 +249,8 @@ handle_message() {
         ping)               cmd_ping ;;
         status)             cmd_status ;;
         ip)                 cmd_ip ;;
+        "mullvad list")     cmd_mullvad_list ;;
+        mullvad\ *)         cmd_mullvad_switch "${cmd#mullvad }" ;;
         "restart company")  cmd_restart_company ;;
         "restart mullvad")  cmd_restart_mullvad ;;
         "disable company")  cmd_disable_company ;;

@@ -18,11 +18,6 @@ if [ -z "${COMPANY_CIDRS}" ]; then
     exit 0
 fi
 
-# Ensure Tailscale return traffic goes to tailscale0, not tun0 (WireGuard)
-ip rule add to 100.64.0.0/10 lookup 52 priority 100 2>/dev/null && \
-    log "rule: Tailscale subnet -> table 52 (priority 100)" || \
-    log "(Tailscale rule exists)"
-
 log "Adding company routes via L2TP (${L2TP_IP})"
 IFS=','
 for cidr in ${COMPANY_CIDRS}; do
