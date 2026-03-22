@@ -213,8 +213,13 @@ setup_routing() {
 }
 
 monitor_ppp0() {
+    local keepalive_count=0
     while ip link show ppp0 >/dev/null 2>&1; do
         sleep 10
+        keepalive_count=$((keepalive_count + 1))
+        if [ $((keepalive_count % 6)) -eq 0 ] && [ -n "${L2TP_CHECK_IP}" ]; then
+            ping -c 1 -W 5 "${L2TP_CHECK_IP}" >/dev/null 2>&1 || true
+        fi
     done
 }
 
