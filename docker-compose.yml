@@ -82,6 +82,7 @@ services:
       - L2TP_PSK=${L2TP_PSK}
       - COMPANY_CIDRS=${COMPANY_CIDRS}
       - NTFY_TOPIC=${NTFY_TOPIC:-vpn-alerts}
+      - L2TP_CHECK_IP=${L2TP_CHECK_IP}
     networks:
       bridge_vpn:
         ipv4_address: 172.29.0.20

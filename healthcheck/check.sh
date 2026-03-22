@@ -29,7 +29,19 @@ log "Starting health check loop (interval: ${INTERVAL}s)"
 log "VPS public IP: ${VPS_PUBLIC_IP}"
 log "L2TP check IP: ${L2TP_CHECK_IP}"
 
-sleep 10
+log "Waiting for ntfy to be ready..."
+ntfy_attempts=0
+while [ $ntfy_attempts -lt 30 ]; do
+    if curl -sf --max-time 3 "${NTFY_URL}/v1/health" >/dev/null 2>&1; then
+        log "ntfy is ready"
+        break
+    fi
+    sleep 2
+    ntfy_attempts=$((ntfy_attempts + 1))
+done
+if [ $ntfy_attempts -ge 30 ]; then
+    log "WARNING: ntfy not ready after 60s, starting checks anyway"
+fi
 
 while true; do
     mullvad_status="up"
