@@ -42,53 +42,53 @@
   - [X] 1.4 Add `NTFY_CMD_TOPIC=vpn-cmd` to `.env.example`.
     Verify: `docker compose config` parses without errors.
 
-- [~] 2.0 **User Story:** As a developer, I want the bot to
+- [X] 2.0 **User Story:** As a developer, I want the bot to
   subscribe to the ntfy command topic and parse incoming
   messages so that commands can be dispatched [4/4]
-  - [~] 2.1 Implement the ntfy JSON stream subscription in
+  - [X] 2.1 Implement the ntfy JSON stream subscription in
     `bot/bot.sh`: `curl -sf --no-buffer` to
     `http://127.0.0.1:80/${CMD_TOPIC}/json` inside a `while
     read` loop. Add outer retry loop with 5s sleep on
     disconnect.
-  - [~] 2.2 Implement JSON message parsing: extract `event`
+  - [X] 2.2 Implement JSON message parsing: extract `event`
     and `message` fields using `sed`/`grep`. Skip non-message
     events (`open`, `keepalive`). Trim and lowercase the
     message text.
-  - [~] 2.3 Implement the `reply()` function: POST to
+  - [X] 2.3 Implement the `reply()` function: POST to
     `http://127.0.0.1:80/${ALERT_TOPIC}` with Title and
     Priority headers (same pattern as
     `healthcheck/check.sh:11-19`).
-  - [~] 2.4 Implement `case` command dispatcher with stub
+  - [X] 2.4 Implement `case` command dispatcher with stub
     handlers that reply "Not implemented yet" for each
     command. Add startup message: "VPN Bot online" posted
     to alerts topic on connect. Verify: deploy, send a
     message to `vpn-cmd` topic, confirm "Not implemented"
     reply appears in `vpn-alerts`.
 
-- [~] 3.0 **User Story:** As a developer, I want read-only
+- [X] 3.0 **User Story:** As a developer, I want read-only
   commands (`ping`, `status`, `ip`, `help`) so that I can
   check VPN state from my phone [4/4]
-  - [~] 3.1 Implement `cmd_ping`: reply with "pong" + system
+  - [X] 3.1 Implement `cmd_ping`: reply with "pong" + system
     uptime from `/proc/uptime`. Priority: default.
-  - [~] 3.2 Implement `cmd_status`: check Mullvad (curl
+  - [X] 3.2 Implement `cmd_status`: check Mullvad (curl
     ifconfig.me, compare to VPS_PUBLIC_IP) and Company VPN
     (ping L2TP_CHECK_IP). Reply with named labels:
     "Mullvad: UP/DOWN (IP)\nCompany: UP/DOWN". Priority:
     default.
-  - [~] 3.3 Implement `cmd_ip`: curl ifconfig.me, reply with
+  - [X] 3.3 Implement `cmd_ip`: curl ifconfig.me, reply with
     the public IP. Priority: default.
-  - [~] 3.4 Implement `cmd_help`: reply with static text
+  - [X] 3.4 Implement `cmd_help`: reply with static text
     listing all commands and brief descriptions. Priority:
     low.
 
-- [~] 4.0 **User Story:** As a developer, I want restart
+- [X] 4.0 **User Story:** As a developer, I want restart
   commands so that I can recover VPN tunnels from my phone
   without SSH [3/3]
-  - [~] 4.1 Implement `cmd_restart_company`: reply
+  - [X] 4.1 Implement `cmd_restart_company`: reply
     "Restarting Company VPN...", run
     `docker restart l2tp-vpn`, wait for container running,
     reply with post-restart status. Priority: high.
-  - [~] 4.2 Implement `cmd_restart_mullvad` confirmation
+  - [X] 4.2 Implement `cmd_restart_mullvad` confirmation
     flow: write timestamp to `/tmp/vpn-bot-confirm-mullvad`,
     reply with warning (priority: urgent). Implement
     `cmd_confirm`: check confirm file exists and < 30s old,
@@ -96,19 +96,19 @@
     `docker restart gluetun`, if expired/missing reply
     "Nothing to confirm". Clean up stale confirm files on
     each command.
-  - [~] 4.3 Implement `cmd_unknown`: reply "Unknown command:
+  - [X] 4.3 Implement `cmd_unknown`: reply "Unknown command:
     {input}. Send `help` for available commands." Ensure no
     shell interpolation of user input (input only passed as
     curl `-d` body).
 
-- [~] 5.0 **User Story:** As a developer, I want dns test and
+- [X] 5.0 **User Story:** As a developer, I want dns test and
   rate limiting so that I can troubleshoot DNS and prevent
   command spam [3/3]
-  - [~] 5.1 Implement `cmd_dns_test`: resolve a company
+  - [X] 5.1 Implement `cmd_dns_test`: resolve a company
     domain (`dig +short @127.0.0.1 ${COMPANY_DOMAIN}`) and
     a public domain (`dig +short @127.0.0.1 example.com`).
     Reply with both results. Priority: default.
-  - [~] 5.2 Implement rate limiting: track last command +
+  - [X] 5.2 Implement rate limiting: track last command +
     timestamp in `/tmp/vpn-bot-last-cmd`. If same command
     received within 60s, reply "Command already processed,
     please wait" and skip execution. Check at the top of
