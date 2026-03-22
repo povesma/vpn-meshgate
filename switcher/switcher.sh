@@ -10,10 +10,12 @@
 REQUEST_FILE="/data/switch-request"
 RESULT_FILE="/data/switch-result"
 COMPOSE_PROJECT="${COMPOSE_PROJECT_NAME:-vpn}"
-COMPOSE_DIR="${COMPOSE_PROJECT_DIR:-/project}"
+COMPOSE_FILE="/project/docker-compose.yml"
+COMPOSE_HOST_DIR="${COMPOSE_PROJECT_DIR:-/project}"
 NTFY_URL="http://172.29.0.10:80"
 NTFY_TOPIC="${NTFY_CMD_TOPIC:-vpn-cmd}"
-GLUETUN_HEALTH_URL="http://172.29.0.10:9999/v1/publicip/ip"
+GLUETUN_CONTAINER="gluetun"
+IP_CHECK_URL="https://ifconfig.me/ip"
 
 # Containers that share gluetun's network namespace — must be recreated after
 # gluetun is replaced, otherwise they retain a reference to the dead namespace.
@@ -22,7 +24,7 @@ GLUETUN_DEPENDENTS="ntfy healthcheck route-init tailscale vpn-bot"
 log() { echo "[switcher] $(date '+%H:%M:%S') $*"; }
 
 compose() {
-    docker compose --project-directory "${COMPOSE_DIR}" --project-name "${COMPOSE_PROJECT}" "$@"
+    docker compose -f "${COMPOSE_FILE}" --env-file /project/.env --project-directory "${COMPOSE_HOST_DIR}" --project-name "${COMPOSE_PROJECT}" "$@"
 }
 
 ntfy_reply() {
@@ -33,13 +35,21 @@ ntfy_reply() {
         -d "${msg}" 2>/dev/null || log "WARNING: ntfy unreachable"
 }
 
+get_vpn_ip() {
+    docker exec "${GLUETUN_CONTAINER}" wget -qO- --timeout=15 "${IP_CHECK_URL}" 2>/dev/null \
+        | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1
+}
+
 wait_gluetun_healthy() {
     local i=0
     while [ $i -lt 30 ]; do
         sleep 3
-        if curl -sf "${GLUETUN_HEALTH_URL}" >/dev/null 2>&1; then
+        local health
+        health=$(docker inspect --format='{{.State.Health.Status}}' "${GLUETUN_CONTAINER}" 2>/dev/null)
+        if [ "${health}" = "healthy" ]; then
             return 0
         fi
+        log "  gluetun health: ${health:-unknown} (attempt $((i+1))/30)"
         i=$((i + 1))
     done
     return 1
@@ -47,11 +57,15 @@ wait_gluetun_healthy() {
 
 do_switch() {
     local country="$1"
-    log "Switching to: ${country}"
+    local old_ip
+    old_ip=$(get_vpn_ip)
+    [ -z "${old_ip}" ] && old_ip="unknown"
+    log "Switching to: ${country} (current IP: ${old_ip})"
     ntfy_reply "Switching Mullvad" "⚠️ Switching to ${country}... (~30s downtime)" "high"
 
-    log "Recreating gluetun with SERVER_COUNTRIES=${country}..."
-    SERVER_COUNTRIES="${country}" compose up -d --force-recreate gluetun 2>&1 \
+    log "Recreating gluetun with MULLVAD_COUNTRY=${country}..."
+    export MULLVAD_COUNTRY="${country}"
+    compose up -d --force-recreate gluetun 2>&1 \
         | while IFS= read -r line; do log "compose: ${line}"; done
 
     log "Waiting for gluetun healthy..."
@@ -68,10 +82,18 @@ do_switch() {
         | while IFS= read -r line; do log "compose: ${line}"; done
 
     local new_ip
-    new_ip=$(curl -sf --max-time 15 https://ifconfig.me 2>/dev/null || echo "unavailable")
-    log "Switch complete. New IP: ${new_ip}"
-    echo "ok ${new_ip}" > "${RESULT_FILE}"
-    ntfy_reply "Mullvad Switched" "✅ Mullvad → ${country}. New IP: ${new_ip}" "high"
+    new_ip=$(get_vpn_ip)
+    [ -z "${new_ip}" ] && new_ip="unavailable"
+
+    if [ "${new_ip}" = "${old_ip}" ] && [ "${new_ip}" != "unavailable" ]; then
+        log "WARNING: IP unchanged after switch (${new_ip})"
+        echo "err same-ip" > "${RESULT_FILE}"
+        ntfy_reply "Switch Failed" "⚠️ Country switch to ${country} failed — IP unchanged (${new_ip}). Server may not have changed." "urgent"
+    else
+        log "Switch complete. ${old_ip} → ${new_ip}"
+        echo "ok ${new_ip}" > "${RESULT_FILE}"
+        ntfy_reply "Mullvad Switched" "✅ Mullvad → ${country}. IP: ${old_ip} → ${new_ip}" "high"
+    fi
 }
 
 log "mullvad-switcher starting"
