@@ -1,14 +1,45 @@
 #!/bin/sh
 set -e
 
+NTFY_URL="http://172.29.0.10:80"
+NTFY_TOPIC="${NTFY_TOPIC:-vpn-alerts}"
+BACKOFF_STEP=0
+CONSECUTIVE_FAILURES=0
+DISCONNECT_TS=""
+
 log() { echo "[l2tp] $*"; }
 
-log "Starting L2TP/IPsec client"
-log "Server: ${L2TP_SERVER}"
-log "User:   ${L2TP_USERNAME}"
-log "CIDRs:  ${COMPANY_CIDRS}"
+notify() {
+    local title="$1" msg="$2" priority="${3:-high}"
+    log "NOTIFY: ${title} — ${msg}"
+    curl -sf -X POST "${NTFY_URL}/${NTFY_TOPIC}" \
+        -H "Title: ${title}" \
+        -H "Priority: ${priority}" \
+        -d "${msg}" 2>/dev/null || log "WARNING: ntfy unreachable"
+}
 
-cat > /etc/ipsec.conf <<EOF
+backoff_sleep() {
+    local delays="15 30 60 120 300"
+    local delay
+    delay=$(echo "${delays}" | tr ' ' '\n' | sed -n "$((BACKOFF_STEP + 1))p")
+    [ -z "${delay}" ] && delay=300
+    log "Retrying in ${delay}s (attempt $((BACKOFF_STEP + 1)))"
+    sleep "${delay}"
+    BACKOFF_STEP=$((BACKOFF_STEP + 1))
+}
+
+reset_backoff() {
+    BACKOFF_STEP=0
+    CONSECUTIVE_FAILURES=0
+}
+
+configure() {
+    log "Starting L2TP/IPsec client"
+    log "Server: ${L2TP_SERVER}"
+    log "User:   ${L2TP_USERNAME}"
+    log "CIDRs:  ${COMPANY_CIDRS}"
+
+    cat > /etc/ipsec.conf <<EOF
 config setup
 
 conn L2TP-PSK
@@ -29,12 +60,12 @@ conn L2TP-PSK
     esp=aes128-sha1,3des-sha1!
 EOF
 
-cat > /etc/ipsec.secrets <<EOF
+    cat > /etc/ipsec.secrets <<EOF
 : PSK "${L2TP_PSK}"
 EOF
-chmod 600 /etc/ipsec.secrets
+    chmod 600 /etc/ipsec.secrets
 
-cat > /etc/xl2tpd/xl2tpd.conf <<EOF
+    cat > /etc/xl2tpd/xl2tpd.conf <<EOF
 [lac company]
 lns = ${L2TP_SERVER}
 ppp debug = yes
@@ -42,7 +73,7 @@ pppoptfile = /etc/ppp/options.l2tpd.client
 length bit = yes
 EOF
 
-cat > /etc/ppp/options.l2tpd.client <<EOF
+    cat > /etc/ppp/options.l2tpd.client <<EOF
 ipcp-accept-local
 ipcp-accept-remote
 refuse-eap
@@ -59,99 +90,173 @@ connect-delay 5000
 name ${L2TP_USERNAME}
 password ${L2TP_PASSWORD}
 EOF
-chmod 600 /etc/ppp/options.l2tpd.client
+    chmod 600 /etc/ppp/options.l2tpd.client
 
-# ip-up script: pppd calls this after link is established
-# pppd passes DNS1/DNS2 env vars when usepeerdns is set
-cat > /etc/ppp/ip-up <<'IPUP'
+    cat > /etc/ppp/ip-up <<'IPUP'
 #!/bin/sh
 if [ -n "$DNS1" ]; then
     echo "$DNS1" > /shared/company-dns-ip
 fi
 IPUP
-chmod +x /etc/ppp/ip-up
-
-log "Starting IPsec (strongSwan)"
-ipsec start
-sleep 2
-
-log "Bringing up IPsec SA"
-ipsec up L2TP-PSK || {
-    log "ERROR: IPsec SA failed"
-    ipsec statusall
-    sleep infinity
+    chmod +x /etc/ppp/ip-up
 }
 
-log "Starting xl2tpd"
-xl2tpd -D -c /etc/xl2tpd/xl2tpd.conf &
-sleep 2
-
-log "Connecting L2TP tunnel"
-echo "c company" > /var/run/xl2tpd/l2tp-control
-
-log "Waiting for ppp0 with IP address..."
-PPP_IP=""
-for i in $(seq 1 60); do
-    PPP_IP=$(ip -4 addr show ppp0 2>/dev/null | awk '/inet / {print $2; exit}')
-    if [ -n "${PPP_IP}" ]; then
-        log "ppp0 is UP with IP ${PPP_IP}"
-        break
-    fi
+cleanup_stale_state() {
+    log "Cleaning up stale state..."
+    killall xl2tpd 2>/dev/null || true
     sleep 1
-done
+    ipsec down L2TP-PSK 2>/dev/null || true
 
-if [ -z "${PPP_IP}" ]; then
+    IFS=','
+    for cidr in ${COMPANY_CIDRS}; do
+        cidr=$(echo "$cidr" | tr -d ' ')
+        [ -n "$cidr" ] && ip route del "${cidr}" dev ppp0 2>/dev/null || true
+    done
+    unset IFS
+
+    iptables -t nat -D POSTROUTING -o ppp0 -j MASQUERADE 2>/dev/null || true
+
+    rm -f /var/run/xl2tpd/l2tp-control
+    mkdir -p /var/run/xl2tpd
+    touch /var/run/xl2tpd/l2tp-control
+}
+
+start_ipsec_daemon() {
+    if ipsec status >/dev/null 2>&1; then
+        log "IPsec daemon already running"
+    else
+        log "Starting IPsec daemon (strongSwan)"
+        ipsec start
+        sleep 2
+    fi
+}
+
+connect() {
+    log "Bringing up IPsec SA"
+    if ! ipsec up L2TP-PSK; then
+        log "ERROR: IPsec SA failed"
+        ipsec statusall 2>/dev/null || true
+        return 1
+    fi
+
+    log "Starting xl2tpd"
+    xl2tpd -D -c /etc/xl2tpd/xl2tpd.conf &
+    sleep 2
+
+    log "Connecting L2TP tunnel"
+    echo "c company" > /var/run/xl2tpd/l2tp-control
+
+    log "Waiting for ppp0 with IP address..."
+    PPP_IP=""
+    local i=0
+    while [ $i -lt 60 ]; do
+        PPP_IP=$(ip -4 addr show ppp0 2>/dev/null | awk '/inet / {print $2; exit}')
+        if [ -n "${PPP_IP}" ]; then
+            log "ppp0 is UP with IP ${PPP_IP}"
+            return 0
+        fi
+        sleep 1
+        i=$((i + 1))
+    done
+
     log "ERROR: ppp0 did not get an IP within 60s"
     ip link show ppp0 2>&1 || true
-    sleep infinity
-fi
+    return 1
+}
 
-ip addr show ppp0
+setup_routing() {
+    ip addr show ppp0
 
-log "Waiting for DNS from PPP peer..."
-COMPANY_DNS=""
-for i in $(seq 1 15); do
-    # Check ip-up script output first (most reliable)
-    if [ -f /shared/company-dns-ip ]; then
-        COMPANY_DNS=$(cat /shared/company-dns-ip | tr -d '[:space:]')
-        [ -n "${COMPANY_DNS}" ] && break
+    log "Waiting for DNS from PPP peer..."
+    local company_dns=""
+    local i=0
+    while [ $i -lt 15 ]; do
+        if [ -f /shared/company-dns-ip ]; then
+            company_dns=$(cat /shared/company-dns-ip | tr -d '[:space:]')
+            [ -n "${company_dns}" ] && break
+        fi
+        if [ -f /etc/ppp/resolv.conf ]; then
+            company_dns=$(awk '/^nameserver/ {print $2; exit}' /etc/ppp/resolv.conf)
+            [ -n "${company_dns}" ] && break
+        fi
+        sleep 1
+        i=$((i + 1))
+    done
+
+    if [ -n "${company_dns}" ]; then
+        log "Company DNS from PPP: ${company_dns}"
+        echo "${company_dns}" > /shared/company-dns-ip
+    else
+        log "WARNING: No DNS received from PPP peer after 15s"
+        echo "" > /shared/company-dns-ip
     fi
-    # Fallback: check resolv.conf
-    if [ -f /etc/ppp/resolv.conf ]; then
-        COMPANY_DNS=$(awk '/^nameserver/ {print $2; exit}' /etc/ppp/resolv.conf)
-        [ -n "${COMPANY_DNS}" ] && break
+
+    log "Adding routes for COMPANY_CIDRS"
+    IFS=','
+    for cidr in ${COMPANY_CIDRS}; do
+        cidr=$(echo "$cidr" | tr -d ' ')
+        if [ -n "$cidr" ]; then
+            log "  route add ${cidr} dev ppp0"
+            ip route add "${cidr}" dev ppp0 2>/dev/null || log "  (route exists)"
+        fi
+    done
+    unset IFS
+
+    sysctl -w net.ipv4.ip_forward=1 2>/dev/null || \
+        log "WARNING: ip_forward read-only (set via docker-compose)"
+
+    log "Adding MASQUERADE for forwarded traffic on ppp0"
+    iptables -t nat -A POSTROUTING -o ppp0 -j MASQUERADE
+
+    log "L2TP/IPsec client ready"
+    ip route
+}
+
+monitor_ppp0() {
+    while ip link show ppp0 >/dev/null 2>&1; do
+        sleep 10
+    done
+}
+
+# === Main ===
+
+configure
+
+while true; do
+    cleanup_stale_state
+    start_ipsec_daemon
+
+    if connect; then
+        setup_routing
+        reset_backoff
+
+        if [ -n "${DISCONNECT_TS}" ]; then
+            local_downtime=$(( $(date +%s) - DISCONNECT_TS ))
+            notify "Company VPN Up" "L2TP reconnected. Downtime: ${local_downtime}s. IP: ${PPP_IP}"
+            DISCONNECT_TS=""
+        else
+            log "Initial connection established"
+        fi
+
+        monitor_ppp0
+
+        DISCONNECT_TS=$(date +%s)
+        log "ppp0 lost — tunnel disconnected"
+        notify "Company VPN Down" "L2TP tunnel lost. Reconnecting..."
+    else
+        CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))
+        log "Connection failed (attempt ${CONSECUTIVE_FAILURES})"
+
+        if [ "${CONSECUTIVE_FAILURES}" -eq 3 ]; then
+            notify "Company VPN Failing" \
+                "L2TP reconnection failing after ${CONSECUTIVE_FAILURES} attempts" "urgent"
+        fi
+
+        if [ -z "${DISCONNECT_TS}" ]; then
+            DISCONNECT_TS=$(date +%s)
+            notify "Company VPN Down" "L2TP connection failed. Retrying..."
+        fi
+
+        backoff_sleep
     fi
-    sleep 1
 done
-
-if [ -n "${COMPANY_DNS}" ]; then
-    log "Company DNS from PPP: ${COMPANY_DNS}"
-    echo "${COMPANY_DNS}" > /shared/company-dns-ip
-    log "Wrote DNS IP to /shared/company-dns-ip"
-else
-    log "WARNING: No DNS received from PPP peer after 15s"
-    echo "" > /shared/company-dns-ip
-fi
-
-log "Adding routes for COMPANY_CIDRS"
-IFS=','
-for cidr in ${COMPANY_CIDRS}; do
-    cidr=$(echo "$cidr" | tr -d ' ')
-    if [ -n "$cidr" ]; then
-        log "  route add ${cidr} dev ppp0"
-        ip route add "${cidr}" dev ppp0 2>/dev/null || log "  (route exists)"
-    fi
-done
-unset IFS
-
-log "Enabling IP forwarding"
-sysctl -w net.ipv4.ip_forward=1 2>/dev/null || \
-    log "WARNING: ip_forward read-only (set via docker-compose)"
-
-log "Adding MASQUERADE for forwarded traffic on ppp0"
-iptables -t nat -A POSTROUTING -o ppp0 -j MASQUERADE
-
-log "L2TP/IPsec client ready"
-ip route
-
-exec sleep infinity
