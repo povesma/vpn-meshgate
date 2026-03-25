@@ -18,6 +18,10 @@ services:
       - DNS_REBINDING_PROTECTION_EXEMPT_HOSTNAMES=*.${COMPANY_DOMAIN}
     sysctls:
       - net.ipv4.conf.all.src_valid_mark=1
+      - net.ipv4.tcp_rmem=4096 262144 16777216
+      - net.ipv4.tcp_wmem=4096 262144 16777216
+    ports:
+      - "41642:41642/udp"
     networks:
       bridge_vpn:
         ipv4_address: 172.29.0.10
@@ -50,7 +54,7 @@ services:
     restart: unless-stopped
 
   tailscale:
-    image: tailscale/tailscale
+    image: tailscale/tailscale:v1.92.5
     container_name: tailscale
     network_mode: service:gluetun
     cap_add:
@@ -60,8 +64,11 @@ services:
       - TS_HOSTNAME=${TS_HOSTNAME}
       - TS_EXTRA_ARGS=--advertise-exit-node --advertise-routes=${COMPANY_CIDRS} --login-server=${HEADSCALE_URL}
       - TS_USERSPACE=false
+      - TS_AUTH_ONCE=false
       - TS_STATE_DIR=/var/lib/tailscale
       - TS_ACCEPT_DNS=false
+      - TS_NO_LOGS_NO_SUPPORT=true
+      - TS_TAILSCALED_EXTRA_ARGS=--port=41642
     volumes:
       - ts-state:/var/lib/tailscale
     depends_on:
@@ -165,7 +172,7 @@ services:
     environment:
       - NTFY_CMD_TOPIC=${NTFY_CMD_TOPIC:-vpn-cmd}
       - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-vpn}
-      - COMPOSE_PROJECT_DIR=${COMPOSE_PROJECT_DIR:-/home/povesma/vpn}
+      - COMPOSE_PROJECT_DIR=${COMPOSE_PROJECT_DIR:-/home/sjohn/vpn}
     depends_on:
       gluetun:
         condition: service_healthy

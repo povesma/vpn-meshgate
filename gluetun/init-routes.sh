@@ -4,6 +4,22 @@ L2TP_IP="172.29.0.20"
 
 log() { echo "[route-init] $*"; }
 
+# Route Tailscale WireGuard/STUN traffic directly via host, bypassing Mullvad.
+# Tailscale marks these packets with fwmark 0x80000. Without this bypass,
+# all Tailscale control traffic goes through Mullvad, preventing direct
+# peer-to-peer connections and making Tailscale depend on Mullvad availability.
+DOCKER_GW="172.29.0.1"
+log "Setting up Tailscale direct routing (table 201 via ${DOCKER_GW})"
+ip route replace default via "${DOCKER_GW}" dev eth0 table 201 2>/dev/null && \
+    log "  route: default via ${DOCKER_GW} table 201" || \
+    log "  WARNING: failed to add table 201 route"
+ip rule add fwmark 0x80000/0xff0000 lookup 201 priority 100 2>/dev/null && \
+    log "  rule: fwmark 0x80000 -> table 201 (priority 100)" || \
+    log "  (rule already exists)"
+ip rule add to 100.64.0.0/10 lookup 52 priority 100 2>/dev/null && \
+    log "  rule: 100.64.0.0/10 -> table 52 (priority 100)" || \
+    log "  (rule already exists)"
+
 log "Waiting for gluetun VPN to be ready..."
 for i in $(seq 1 60); do
     if wget -q -O /dev/null http://127.0.0.1:9999/v1/publicip/ip 2>/dev/null; then

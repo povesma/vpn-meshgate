@@ -39,6 +39,8 @@ configure() {
     log "User:   ${L2TP_USERNAME}"
     log "CIDRs:  ${COMPANY_CIDRS}"
 
+    sysctl -w net.ipv4.tcp_mtu_probing=1 2>/dev/null || true
+
     cat > /etc/ipsec.conf <<EOF
 config setup
 
@@ -71,6 +73,9 @@ lns = ${L2TP_SERVER}
 ppp debug = yes
 pppoptfile = /etc/ppp/options.l2tpd.client
 length bit = yes
+; Raise bandwidth cap to 100 Mbps (xl2tpd defaults to 10 Mbps)
+tx bps = 100000000
+rx bps = 100000000
 EOF
 
     cat > /etc/ppp/options.l2tpd.client <<EOF
@@ -205,8 +210,19 @@ setup_routing() {
     sysctl -w net.ipv4.ip_forward=1 2>/dev/null || \
         log "WARNING: ip_forward read-only (set via docker-compose)"
 
+    log "Tuning ppp0 txqueuelen and TCP buffers"
+    ip link set ppp0 txqueuelen 100
+    sysctl -w net.core.wmem_max=16777216 2>/dev/null || true
+    sysctl -w net.core.rmem_max=16777216 2>/dev/null || true
+    sysctl -w net.ipv4.tcp_rmem="4096 262144 16777216" 2>/dev/null || true
+    sysctl -w net.ipv4.tcp_wmem="4096 262144 16777216" 2>/dev/null || true
+
     log "Adding MASQUERADE for forwarded traffic on ppp0"
     iptables -t nat -A POSTROUTING -o ppp0 -j MASQUERADE
+
+    log "Adding MSS clamping on ppp0"
+    iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -o ppp0 -j TCPMSS --clamp-mss-to-pmtu
+    iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -i ppp0 -j TCPMSS --clamp-mss-to-pmtu
 
     log "L2TP/IPsec client ready"
     ip route
