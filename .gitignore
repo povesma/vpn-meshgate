@@ -25,3 +25,6 @@ docs/executive-test-report-*.md
 
 # Claude-mem session files
 claude-mem-*.md
+
+# RLM state
+.claude/rlm_state/

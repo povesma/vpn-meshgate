@@ -295,7 +295,7 @@ The compose command uses three flags to bridge the container/host namespace gap:
 
 - `-f /project/docker-compose.yml` — compose file location (inside container)
 - `--env-file /project/.env` — secrets (inside container, from bind mount)
-- `--project-directory /home/povesma/vpn` — host path for the Docker daemon to
+- `--project-directory /home/sjohn/vpn` — host path for the Docker daemon to
   resolve relative volume mounts like `./gluetun/post-rules.txt`
 
 ### Sequence Diagram
