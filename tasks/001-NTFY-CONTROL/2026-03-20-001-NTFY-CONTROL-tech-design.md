@@ -228,7 +228,8 @@ as a recovery signal.
 2. `docker update --restart=no l2tp-vpn` — prevents restart on crash or VPS reboot
 3. Reply with confirmation (priority: urgent)
 
-Re-enable via SSH only:
+Re-enable via SSH only (by design — if an attacker compromises a
+Tailscale node, they cannot restore corporate network access via ntfy):
 ```bash
 docker update --restart=unless-stopped l2tp-vpn
 docker start l2tp-vpn
