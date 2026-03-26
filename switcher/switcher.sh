@@ -81,6 +81,12 @@ do_switch() {
     compose up -d --force-recreate ${GLUETUN_DEPENDENTS} 2>&1 \
         | while IFS= read -r line; do log "compose: ${line}"; done
 
+    # Restart dnsmasq so it re-reads company DNS IP (may have changed
+    # if L2TP reconnected during the switch) and refreshes its routes.
+    log "Restarting dnsmasq to refresh company DNS config..."
+    compose restart dnsmasq 2>&1 \
+        | while IFS= read -r line; do log "compose: ${line}"; done
+
     local new_ip
     new_ip=$(get_vpn_ip)
     [ -z "${new_ip}" ] && new_ip="unavailable"
