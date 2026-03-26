@@ -21,9 +21,11 @@ notify() {
 
 mullvad_prev="unknown"
 l2tp_prev="unknown"
+tailscale_prev="unknown"
 
 echo "mullvad=unknown" > "${STATE_FILE}"
 echo "l2tp=unknown" >> "${STATE_FILE}"
+echo "tailscale=unknown" >> "${STATE_FILE}"
 
 log "Starting health check loop (interval: ${INTERVAL}s)"
 log "VPS public IP: ${VPS_PUBLIC_IP}"
@@ -78,6 +80,23 @@ while true; do
             l2tp_prev="${l2tp_status}"
             log "L2TP: ${l2tp_status}"
         fi
+    fi
+
+    # Check Tailscale exit node: tailscale0 interface must exist in our namespace.
+    # If gluetun was recreated but tailscale container wasn't, the interface disappears.
+    tailscale_status="up"
+    if ! ip link show tailscale0 >/dev/null 2>&1; then
+        tailscale_status="down"
+    fi
+
+    if [ "${tailscale_status}" != "${tailscale_prev}" ]; then
+        if [ "${tailscale_status}" = "down" ]; then
+            notify "Tailscale EXIT NODE DOWN" "tailscale0 interface missing — exit node is offline. Namespace containers may need recreating." "urgent"
+        elif [ "${tailscale_prev}" != "unknown" ]; then
+            notify "Tailscale EXIT NODE RECOVERED" "tailscale0 interface is back. Exit node operational." "default"
+        fi
+        tailscale_prev="${tailscale_status}"
+        log "Tailscale: ${tailscale_status}"
     fi
 
     sleep "${INTERVAL}"
