@@ -327,6 +327,7 @@ docker exec tailscale tailscale ping <peer>
 - [ ] Web UI / Android app for tunnel management
 - [ ] Mullvad country switching from the UI
 - [ ] Traffic statistics dashboard
+- [ ] Auto-heal for namespace desync: when tailscale0 disappears after gluetun recreate, automatically recreate namespace containers (healthcheck detects but can't self-fix since it's also in the namespace — needs an external watcher or the switcher to handle recovery)
 
 ## Deep Dive
 
