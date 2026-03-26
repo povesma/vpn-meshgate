@@ -216,6 +216,8 @@ cmd_mullvad_switch() {
     reply "Switch Queued" "🕐 Switching to ${country}... mullvad-switcher will report back." "high"
 }
 
+# Re-enable via SSH only — prevents attacker with compromised Tailscale
+# node from restoring corporate network access via ntfy
 cmd_disable_company() {
     docker stop l2tp-vpn >/dev/null 2>&1
     docker update --restart=no l2tp-vpn >/dev/null 2>&1

@@ -291,12 +291,16 @@ Send commands and receive responses within the same topic:
 | `ip` | Show current public exit IP |
 | `restart company` | Restart L2TP tunnel |
 | `restart mullvad` | Restart Mullvad tunnel (requires `confirm`) |
-| `disable company` | Stop L2TP permanently |
+| `disable company` | Stop L2TP permanently (SSH to re-enable) |
 | `dns test` | Test split DNS resolution |
 | `help` | List commands |
 
 `restart mullvad` requires two-step confirmation: send the command,
 then `confirm` within 30 seconds.
+
+`disable company` requires SSH to re-enable by design — if an attacker
+compromises a Tailscale node, they cannot restore the corporate tunnel
+via ntfy.
 
 ## Troubleshooting
 
