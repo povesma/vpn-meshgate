@@ -80,6 +80,9 @@ services:
     build: ./l2tp
     container_name: l2tp-vpn
     privileged: true
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     devices:
       - /dev/ppp:/dev/ppp
     environment:

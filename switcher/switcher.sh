@@ -102,6 +102,40 @@ do_switch() {
     fi
 }
 
+WATCHDOG_INTERVAL=30
+_watchdog_ticks=0
+
+# Check if all gluetun-namespace containers are attached to the current
+# gluetun container. If any are stale (pointing to a dead container ID),
+# recreate them all. This heals namespace desync caused by gluetun being
+# recreated outside the normal country-switch flow (e.g. manual restart).
+check_namespace_desync() {
+    local gluetun_id
+    gluetun_id=$(docker inspect --format='{{.Id}}' "${GLUETUN_CONTAINER}" 2>/dev/null)
+    [ -z "${gluetun_id}" ] && return  # gluetun itself is down, skip
+
+    local stale=0
+    for svc in ${GLUETUN_DEPENDENTS}; do
+        local net_mode peer_id
+        net_mode=$(docker inspect --format='{{.HostConfig.NetworkMode}}' "${svc}" 2>/dev/null)
+        peer_id="${net_mode#container:}"
+        if [ "${peer_id}" != "${gluetun_id}" ]; then
+            log "WATCHDOG: ${svc} has stale namespace ref (${peer_id:-missing}), gluetun is ${gluetun_id}"
+            stale=1
+            break
+        fi
+    done
+
+    if [ "${stale}" = "1" ]; then
+        log "WATCHDOG: namespace desync detected — recreating gluetun-namespace containers"
+        ntfy_reply "Namespace Desync" "⚠️ Gluetun namespace desync detected — auto-healing containers" "high"
+        # shellcheck disable=SC2086
+        compose up -d --force-recreate ${GLUETUN_DEPENDENTS} 2>&1 \
+            | while IFS= read -r line; do log "watchdog: ${line}"; done
+        log "WATCHDOG: heal complete"
+    fi
+}
+
 log "mullvad-switcher starting"
 rm -f "${REQUEST_FILE}" "${RESULT_FILE}"
 
@@ -113,5 +147,12 @@ while true; do
             do_switch "${country}"
         fi
     fi
+
+    _watchdog_ticks=$((_watchdog_ticks + 1))
+    if [ $((_watchdog_ticks * 2)) -ge ${WATCHDOG_INTERVAL} ]; then
+        _watchdog_ticks=0
+        check_namespace_desync
+    fi
+
     sleep 2
 done
