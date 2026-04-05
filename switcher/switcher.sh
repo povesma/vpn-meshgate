@@ -57,10 +57,11 @@ wait_gluetun_healthy() {
 
 do_switch() {
     local country="$1"
-    local old_ip
+    local old_ip old_country switch_ok=1
     old_ip=$(get_vpn_ip)
     [ -z "${old_ip}" ] && old_ip="unknown"
-    log "Switching to: ${country} (current IP: ${old_ip})"
+    old_country=$(docker exec "${GLUETUN_CONTAINER}" printenv SERVER_COUNTRIES 2>/dev/null)
+    log "Switching to: ${country} (current IP: ${old_ip}, from: ${old_country:-unknown})"
     ntfy_reply "Switching Mullvad" "⚠️ Switching to ${country}... (~30s downtime)" "high"
 
     log "Recreating gluetun with MULLVAD_COUNTRY=${country}..."
@@ -70,10 +71,31 @@ do_switch() {
 
     log "Waiting for gluetun healthy..."
     if ! wait_gluetun_healthy; then
-        log "ERROR: gluetun did not recover within 90s"
-        echo "err timeout" > "${RESULT_FILE}"
-        ntfy_reply "Switch Failed" "⚠️ Gluetun did not recover in 90s switching to ${country}." "urgent"
-        return
+        switch_ok=0
+        log "ERROR: gluetun did not recover within 90s — rolling back to ${old_country:-default}"
+
+        # Rollback: restore previous country and recreate gluetun
+        if [ -n "${old_country}" ]; then
+            export MULLVAD_COUNTRY="${old_country}"
+        else
+            unset MULLVAD_COUNTRY
+        fi
+        compose up -d --force-recreate gluetun 2>&1 \
+            | while IFS= read -r line; do log "rollback: ${line}"; done
+
+        if ! wait_gluetun_healthy; then
+            log "ERROR: rollback also failed — force-recreating dependents with --no-deps"
+            # Bypass depends_on health conditions so containers at least start
+            # shellcheck disable=SC2086
+            compose up -d --force-recreate --no-deps ${GLUETUN_DEPENDENTS} 2>&1 \
+                | while IFS= read -r line; do log "force: ${line}"; done
+            compose restart dnsmasq 2>&1 \
+                | while IFS= read -r line; do log "force: ${line}"; done
+            echo "err rollback-failed" > "${RESULT_FILE}"
+            ntfy_reply "Switch Failed" "⚠️ Switch to ${country} failed AND rollback to ${old_country:-default} failed. Manual intervention needed." "urgent"
+            return
+        fi
+        log "Rollback successful — gluetun healthy with ${old_country:-default}"
     fi
 
     log "Gluetun healthy. Recreating namespace-dependent containers..."
@@ -86,6 +108,14 @@ do_switch() {
     log "Restarting dnsmasq to refresh company DNS config..."
     compose restart dnsmasq 2>&1 \
         | while IFS= read -r line; do log "compose: ${line}"; done
+
+    if [ "${switch_ok}" = "0" ]; then
+        local rollback_ip
+        rollback_ip=$(get_vpn_ip)
+        echo "err timeout" > "${RESULT_FILE}"
+        ntfy_reply "Switch Failed — Rolled Back" "⚠️ Switch to ${country} timed out. Rolled back to ${old_country:-default}. IP: ${rollback_ip:-unavailable}" "urgent"
+        return
+    fi
 
     local new_ip
     new_ip=$(get_vpn_ip)
