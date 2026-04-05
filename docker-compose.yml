@@ -46,6 +46,7 @@ services:
       - NET_ADMIN
     environment:
       - COMPANY_CIDRS=${COMPANY_CIDRS}
+      - EXTRA_VPN_CIDRS=${EXTRA_VPN_CIDRS}
     depends_on:
       gluetun:
         condition: service_healthy
@@ -91,6 +92,7 @@ services:
       - L2TP_PASSWORD=${L2TP_PASSWORD}
       - L2TP_PSK=${L2TP_PSK}
       - COMPANY_CIDRS=${COMPANY_CIDRS}
+      - EXTRA_VPN_CIDRS=${EXTRA_VPN_CIDRS}
       - NTFY_TOPIC=${NTFY_TOPIC:-vpn-alerts}
       - L2TP_CHECK_IP=${L2TP_CHECK_IP}
     networks:

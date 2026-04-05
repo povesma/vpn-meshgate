@@ -29,14 +29,17 @@ for i in $(seq 1 60); do
     sleep 2
 done
 
-if [ -z "${COMPANY_CIDRS}" ]; then
-    log "COMPANY_CIDRS empty, nothing to route"
+ALL_VPN_CIDRS="${COMPANY_CIDRS}${EXTRA_VPN_CIDRS:+,${EXTRA_VPN_CIDRS}}"
+
+if [ -z "${ALL_VPN_CIDRS}" ]; then
+    log "No CIDRs to route (COMPANY_CIDRS and EXTRA_VPN_CIDRS both empty)"
     exit 0
 fi
 
-log "Adding company routes via L2TP (${L2TP_IP})"
+log "Adding VPN routes via L2TP (${L2TP_IP})"
+[ -n "${EXTRA_VPN_CIDRS}" ] && log "  extra CIDRs: ${EXTRA_VPN_CIDRS}"
 IFS=','
-for cidr in ${COMPANY_CIDRS}; do
+for cidr in ${ALL_VPN_CIDRS}; do
     cidr=$(echo "$cidr" | tr -d ' ')
     if [ -n "$cidr" ]; then
         ip route replace "${cidr}" via "${L2TP_IP}" dev eth0 && \

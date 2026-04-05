@@ -38,6 +38,7 @@ configure() {
     log "Server: ${L2TP_SERVER}"
     log "User:   ${L2TP_USERNAME}"
     log "CIDRs:  ${COMPANY_CIDRS}"
+    log "Extra:  ${EXTRA_VPN_CIDRS:-none}"
 
     sysctl -w net.ipv4.tcp_mtu_probing=1 2>/dev/null || true
 
@@ -112,8 +113,9 @@ cleanup_stale_state() {
     sleep 1
     ipsec down L2TP-PSK 2>/dev/null || true
 
+    ALL_VPN_CIDRS="${COMPANY_CIDRS}${EXTRA_VPN_CIDRS:+,${EXTRA_VPN_CIDRS}}"
     IFS=','
-    for cidr in ${COMPANY_CIDRS}; do
+    for cidr in ${ALL_VPN_CIDRS}; do
         cidr=$(echo "$cidr" | tr -d ' ')
         [ -n "$cidr" ] && ip route del "${cidr}" dev ppp0 2>/dev/null || true
     done
@@ -196,9 +198,11 @@ setup_routing() {
         echo "" > /shared/company-dns-ip
     fi
 
-    log "Adding routes for COMPANY_CIDRS"
+    ALL_VPN_CIDRS="${COMPANY_CIDRS}${EXTRA_VPN_CIDRS:+,${EXTRA_VPN_CIDRS}}"
+    log "Adding routes for VPN CIDRs"
+    [ -n "${EXTRA_VPN_CIDRS}" ] && log "  extra CIDRs: ${EXTRA_VPN_CIDRS}"
     IFS=','
-    for cidr in ${COMPANY_CIDRS}; do
+    for cidr in ${ALL_VPN_CIDRS}; do
         cidr=$(echo "$cidr" | tr -d ' ')
         if [ -n "$cidr" ]; then
             log "  route add ${cidr} dev ppp0"
