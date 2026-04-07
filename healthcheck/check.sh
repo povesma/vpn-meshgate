@@ -5,6 +5,7 @@ NTFY_URL="http://127.0.0.1:80"
 TOPIC="${NTFY_TOPIC:-vpn-alerts}"
 IP_CHECK_URL="https://ifconfig.me"
 STATE_FILE="/tmp/vpn-health-state"
+INSTANCES_JSON="/shared/vpn-instances.json"
 
 log() { echo "[healthcheck] $(date '+%H:%M:%S') $*"; }
 
@@ -20,16 +21,13 @@ notify() {
 }
 
 mullvad_prev="unknown"
-l2tp_prev="unknown"
 tailscale_prev="unknown"
 
 echo "mullvad=unknown" > "${STATE_FILE}"
-echo "l2tp=unknown" >> "${STATE_FILE}"
 echo "tailscale=unknown" >> "${STATE_FILE}"
 
 log "Starting health check loop (interval: ${INTERVAL}s)"
 log "VPS public IP: ${VPS_PUBLIC_IP}"
-log "L2TP check IP: ${L2TP_CHECK_IP}"
 
 log "Waiting for ntfy to be ready..."
 ntfy_attempts=0
@@ -65,21 +63,30 @@ while true; do
         log "Mullvad: ${mullvad_status} (IP: ${public_ip:-none})"
     fi
 
-    l2tp_status="up"
-    if [ -n "${L2TP_CHECK_IP}" ]; then
-        if ! ping -c 1 -W 5 "${L2TP_CHECK_IP}" >/dev/null 2>&1; then
-            l2tp_status="down"
-        fi
+    if [ -f "${INSTANCES_JSON}" ]; then
+        for row in $(jq -c '.[]' "${INSTANCES_JSON}"); do
+            local name check_ip
+            name=$(echo "$row" | jq -r '.name')
+            check_ip=$(echo "$row" | jq -r '.check_ip')
+            [ -z "${check_ip}" ] || [ "${check_ip}" = "" ] && continue
 
-        if [ "${l2tp_status}" != "${l2tp_prev}" ]; then
-            if [ "${l2tp_status}" = "down" ]; then
-                notify "Company VPN DOWN" "L2TP tunnel is down. Cannot reach ${L2TP_CHECK_IP}."
-            elif [ "${l2tp_prev}" != "unknown" ]; then
-                notify "Company VPN RECOVERED" "L2TP tunnel is back. ${L2TP_CHECK_IP} reachable." "default"
+            local inst_status="up"
+            if ! ping -c 1 -W 5 "${check_ip}" >/dev/null 2>&1; then
+                inst_status="down"
             fi
-            l2tp_prev="${l2tp_status}"
-            log "L2TP: ${l2tp_status}"
-        fi
+
+            local prev_var
+            prev_var=$(eval echo "\${vpn_prev_${name}:-unknown}" 2>/dev/null || echo "unknown")
+            if [ "${inst_status}" != "${prev_var}" ]; then
+                if [ "${inst_status}" = "down" ]; then
+                    notify "${name} VPN DOWN" "Tunnel is down. Cannot reach ${check_ip}."
+                elif [ "${prev_var}" != "unknown" ]; then
+                    notify "${name} VPN RECOVERED" "Tunnel is back. ${check_ip} reachable." "default"
+                fi
+                eval "vpn_prev_${name}=${inst_status}"
+                log "${name}: ${inst_status}"
+            fi
+        done
     fi
 
     # Check Tailscale exit node: tailscale0 interface must exist in our namespace.

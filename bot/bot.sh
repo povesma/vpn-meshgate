@@ -7,6 +7,7 @@ IP_CHECK_URL="https://ifconfig.me"
 SWITCH_REQUEST="/data/switch-request"
 CONFIRM_FILE="/tmp/vpn-bot-confirm-mullvad"
 RATE_FILE="/tmp/vpn-bot-last-cmd"
+INSTANCES_JSON="/shared/vpn-instances.json"
 
 log() { echo "[vpn-bot] $(date '+%H:%M:%S') $*"; }
 
@@ -80,7 +81,7 @@ cmd_ping() {
 }
 
 cmd_status() {
-    local mullvad_status="UP" company_status="UP"
+    local mullvad_status="UP"
     local public_ip
     public_ip=$(curl -sf --max-time 10 "${IP_CHECK_URL}" 2>/dev/null | grep -o '[0-9.]*' | head -1)
 
@@ -92,18 +93,31 @@ cmd_status() {
         mullvad_status="UP (${public_ip})"
     fi
 
-    if [ -n "${L2TP_CHECK_IP}" ]; then
-        if ping -c 1 -W 5 "${L2TP_CHECK_IP}" >/dev/null 2>&1; then
-            company_status="UP (${L2TP_CHECK_IP} reachable)"
-        else
-            company_status="DOWN (${L2TP_CHECK_IP} unreachable)"
-        fi
+    local instances_status=""
+    if [ -f "${INSTANCES_JSON}" ]; then
+        for row in $(jq -c '.[]' "${INSTANCES_JSON}"); do
+            local name check_ip container inst_status
+            name=$(echo "$row" | jq -r '.name')
+            check_ip=$(echo "$row" | jq -r '.check_ip')
+            container=$(echo "$row" | jq -r '.container')
+            if [ -n "${check_ip}" ] && [ "${check_ip}" != "" ]; then
+                if ping -c 1 -W 5 "${check_ip}" >/dev/null 2>&1; then
+                    inst_status="UP (${check_ip})"
+                else
+                    inst_status="DOWN (${check_ip})"
+                fi
+            else
+                inst_status="NO CHECK IP"
+            fi
+            instances_status="${instances_status}
+${name}: ${inst_status}"
+        done
     else
-        company_status="SKIP (no L2TP_CHECK_IP)"
+        instances_status="
+(no vpn-instances.json)"
     fi
 
-    reply "VPN Status" "Mullvad: ${mullvad_status}
-Company: ${company_status}"
+    reply "VPN Status" "Mullvad: ${mullvad_status}${instances_status}"
 }
 
 cmd_ip() {
@@ -118,12 +132,14 @@ cmd_ip() {
 
 cmd_help() {
     reply "VPN Bot Commands" "ping - check bot is alive
-status - VPN tunnel status
+status - VPN tunnel status (per-instance)
 ip - show public exit IP
-mullvad <cc> - switch exit country (mullvad list for codes)
-restart company - restart L2TP tunnel
+restart <name> - restart a VPN instance
+restart company - restart all VPN instances
 restart mullvad - restart Mullvad (requires confirm)
-disable company - stop L2TP permanently (SSH to re-enable)
+disable <name> - stop a VPN instance (SSH to re-enable)
+disable company - stop all VPN instances
+mullvad <cc> - switch exit country (mullvad list for codes)
 dns test - test DNS resolution
 help - show this message" "low"
 }
@@ -139,19 +155,37 @@ ua=Ukraine        za=South Africa    ng=Nigeria
 Send: mullvad <code>" "low"
 }
 
-cmd_restart_company() {
-    reply "Company VPN" "Restarting Company VPN..." "high"
-    if docker restart l2tp-vpn >/dev/null 2>&1; then
-        sleep 5
-        local status="unknown"
-        if ping -c 1 -W 5 "${L2TP_CHECK_IP}" >/dev/null 2>&1; then
-            status="UP"
-        else
-            status="DOWN"
+cmd_restart_instance() {
+    local name="$1"
+    local container="vpn-${name}"
+    if [ -f "${INSTANCES_JSON}" ]; then
+        if ! jq -e ".[] | select(.name == \"${name}\")" "${INSTANCES_JSON}" >/dev/null 2>&1; then
+            reply "Unknown Instance" "No VPN instance '${name}'. Send 'status' to see available instances."
+            return
         fi
-        reply "Company VPN Restarted" "L2TP container restarted. Status: ${status}" "high"
+    fi
+    reply "VPN Restart" "Restarting ${container}..." "high"
+    if docker restart "${container}" >/dev/null 2>&1; then
+        sleep 5
+        reply "VPN Restarted" "${container} restarted" "high"
     else
-        reply "Company VPN" "Failed to restart l2tp-vpn container" "urgent"
+        reply "VPN Restart" "Failed to restart ${container}" "urgent"
+    fi
+}
+
+cmd_restart_company() {
+    if [ -f "${INSTANCES_JSON}" ]; then
+        local names
+        names=$(jq -r '.[].container' "${INSTANCES_JSON}")
+        reply "Company VPN" "Restarting all VPN instances..." "high"
+        for container in ${names}; do
+            docker restart "${container}" >/dev/null 2>&1 || \
+                log "WARNING: failed to restart ${container}"
+        done
+        sleep 5
+        reply "Company VPN Restarted" "All VPN instances restarted" "high"
+    else
+        reply "Company VPN" "No vpn-instances.json found" "urgent"
     fi
 }
 
@@ -179,18 +213,28 @@ cmd_confirm() {
 }
 
 cmd_dns_test() {
-    local company_result public_result
-    if [ -n "${COMPANY_DOMAIN}" ]; then
-        company_result=$(dig +short @127.0.0.1 "${COMPANY_DOMAIN}" 2>/dev/null)
-        [ -z "${company_result}" ] && company_result="no result"
-    else
-        company_result="SKIP (no COMPANY_DOMAIN)"
+    local results=""
+    if [ -f "${INSTANCES_JSON}" ]; then
+        for row in $(jq -c '.[]' "${INSTANCES_JSON}"); do
+            local name domains
+            name=$(echo "$row" | jq -r '.name')
+            domains=$(echo "$row" | jq -r '.dns_domains[]' 2>/dev/null)
+            for domain in ${domains}; do
+                local result
+                result=$(dig +short @127.0.0.1 "${domain}" 2>/dev/null)
+                [ -z "${result}" ] && result="no result"
+                results="${results}
+${name} (${domain}): ${result}"
+            done
+        done
     fi
+    local public_result
     public_result=$(dig +short @127.0.0.1 example.com 2>/dev/null)
     [ -z "${public_result}" ] && public_result="no result"
-
-    reply "DNS Test" "Company (${COMPANY_DOMAIN:-n/a}): ${company_result}
+    results="${results}
 Public (example.com): ${public_result}"
+
+    reply "DNS Test" "${results}"
 }
 
 cmd_mullvad_switch() {
@@ -213,15 +257,33 @@ cmd_mullvad_switch() {
     fi
 
     echo "${country}" > "${SWITCH_REQUEST}"
-    reply "Switch Queued" "🕐 Switching to ${country}... mullvad-switcher will report back." "high"
+    reply "Switch Queued" "Switching to ${country}... mullvad-switcher will report back." "high"
 }
 
-# Re-enable via SSH only — prevents attacker with compromised Tailscale
-# node from restoring corporate network access via ntfy
+cmd_disable_instance() {
+    local name="$1"
+    local container="vpn-${name}"
+    if [ -f "${INSTANCES_JSON}" ]; then
+        if ! jq -e ".[] | select(.name == \"${name}\")" "${INSTANCES_JSON}" >/dev/null 2>&1; then
+            reply "Unknown Instance" "No VPN instance '${name}'. Send 'status' to see available instances."
+            return
+        fi
+    fi
+    docker stop "${container}" >/dev/null 2>&1
+    docker update --restart=no "${container}" >/dev/null 2>&1
+    reply "VPN Disabled" "${container} stopped and restart disabled. Use SSH to re-enable." "urgent"
+}
+
 cmd_disable_company() {
-    docker stop l2tp-vpn >/dev/null 2>&1
-    docker update --restart=no l2tp-vpn >/dev/null 2>&1
-    reply "Company VPN Disabled" "l2tp-vpn stopped and restart disabled. Use SSH to re-enable." "urgent"
+    if [ -f "${INSTANCES_JSON}" ]; then
+        for container in $(jq -r '.[].container' "${INSTANCES_JSON}"); do
+            docker stop "${container}" >/dev/null 2>&1
+            docker update --restart=no "${container}" >/dev/null 2>&1
+        done
+        reply "All VPN Disabled" "All VPN instances stopped. Use SSH to re-enable." "urgent"
+    else
+        reply "VPN Disabled" "No vpn-instances.json found" "urgent"
+    fi
 }
 
 cmd_unknown() {
@@ -255,7 +317,9 @@ handle_message() {
         mullvad\ *)         cmd_mullvad_switch "${cmd#mullvad }" ;;
         "restart company")  cmd_restart_company ;;
         "restart mullvad")  cmd_restart_mullvad ;;
+        restart\ *)         cmd_restart_instance "${cmd#restart }" ;;
         "disable company")  cmd_disable_company ;;
+        disable\ *)         cmd_disable_instance "${cmd#disable }" ;;
         "dns test")         cmd_dns_test ;;
         help)               cmd_help ;;
         confirm)            cmd_confirm ;;
