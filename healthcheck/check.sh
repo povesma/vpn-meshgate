@@ -6,6 +6,7 @@ TOPIC="${NTFY_TOPIC:-vpn-alerts}"
 IP_CHECK_URL="https://ifconfig.me"
 STATE_FILE="/tmp/vpn-health-state"
 INSTANCES_JSON="/shared/vpn-instances.json"
+VPN_STATE_DIR="/tmp/vpn-instance-state"
 
 log() { echo "[healthcheck] $(date '+%H:%M:%S') $*"; }
 
@@ -23,6 +24,7 @@ notify() {
 mullvad_prev="unknown"
 tailscale_prev="unknown"
 
+mkdir -p "${VPN_STATE_DIR}"
 echo "mullvad=unknown" > "${STATE_FILE}"
 echo "tailscale=unknown" >> "${STATE_FILE}"
 
@@ -75,15 +77,16 @@ while true; do
                 inst_status="down"
             fi
 
-            local prev_var
-            prev_var=$(eval echo "\${vpn_prev_${name}:-unknown}" 2>/dev/null || echo "unknown")
-            if [ "${inst_status}" != "${prev_var}" ]; then
+            local prev_status="unknown"
+            local state_file="${VPN_STATE_DIR}/${name}"
+            [ -f "${state_file}" ] && prev_status=$(cat "${state_file}")
+            if [ "${inst_status}" != "${prev_status}" ]; then
                 if [ "${inst_status}" = "down" ]; then
                     notify "${name} VPN DOWN" "Tunnel is down. Cannot reach ${check_ip}."
-                elif [ "${prev_var}" != "unknown" ]; then
+                elif [ "${prev_status}" != "unknown" ]; then
                     notify "${name} VPN RECOVERED" "Tunnel is back. ${check_ip} reachable." "default"
                 fi
-                eval "vpn_prev_${name}=${inst_status}"
+                echo "${inst_status}" > "${state_file}"
                 log "${name}: ${inst_status}"
             fi
         done
