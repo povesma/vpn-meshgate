@@ -20,8 +20,8 @@ set -euo pipefail
 # PROTECTED_TRACKED: in git; synced by default. Skipping adds --exclude.
 #PROTECTED_GITIGNORED=(".env" "backend/.env")
 #PROTECTED_TRACKED=("config.yaml" "docker-compose.yml")
-PROTECTED_GITIGNORED=(".env" "gluetun/auth/config.toml")
-PROTECTED_TRACKED=()
+PROTECTED_GITIGNORED=(".env" ".env.vpn-*" "gluetun/auth/config.toml" "docker-compose.override.yml" "vpn-instances.json")
+PROTECTED_TRACKED=("docker-compose.yml")
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -75,6 +75,15 @@ STATIC_FILTERS=(
     --exclude='/.vscode/'
     --exclude='/*.swp'
     --exclude='/*.swo'
+    # Docker named volumes — created by Docker on the VPS as
+    # root-owned directories. rsync cannot read/delete them and
+    # they must never be touched by deployment.
+    --exclude='/ts-state/'
+    --exclude='/ts-test-state/'
+    --exclude='/ntfy-cache/'
+    --exclude='/shared-config/'
+    --exclude='/switcher-data/'
+    --exclude='/netbird-*/'
 )
 
 echo "▶ Syncing toremote host..."
@@ -90,14 +99,20 @@ if [[ $DRY_RUN -eq 0 && $FORCE -eq 0 ]]; then
     SSH_CMD=(ssh -o StrictHostKeyChecking=accept-new)
     [[ -n "$SSH_KEY" ]] && SSH_CMD+=(-i "$SSH_KEY")
 
-    ALL_PROTECTED=("${PROTECTED_GITIGNORED[@]}" "${PROTECTED_TRACKED[@]}")
+    # Expand glob patterns in PROTECTED lists to actual files
+    ALL_PROTECTED=()
+    for pattern in "${PROTECTED_GITIGNORED[@]}" "${PROTECTED_TRACKED[@]}"; do
+        # shellcheck disable=SC2086
+        for expanded in $SCRIPT_DIR/$pattern; do
+            [[ -f "$expanded" ]] && ALL_PROTECTED+=("${expanded#$SCRIPT_DIR/}")
+        done
+    done
     ASKED=0
     for f in "${ALL_PROTECTED[@]}"; do
-        [[ ! -f "$SCRIPT_DIR/$f" ]] && continue
         # Only prompt if the file already exists on the remote host.
         # New files (no remote copy yet) are sent silently — no risk of overwrite.
         if "${SSH_CMD[@]}" "$REMOTE_HOST" "[ -f '$REMOTE_PATH/$f' ]" 2>/dev/null; then
-            diff=$(rsync -ni -e "$RSYNC_RSH" \
+            diff=$(rsync -ni --checksum -e "$RSYNC_RSH" \
                 "$SCRIPT_DIR/$f" "$REMOTE_HOST:$REMOTE_PATH/$f" 2>&1) || true
             if [[ -n "$diff" ]]; then
                 [[ $ASKED -eq 0 ]] && echo "" && ASKED=1
@@ -150,7 +165,7 @@ done
 FINAL_FILTERS+=("${STATIC_FILTERS[@]}")
 
 # ── Execute sync ──────────────────────────────────────────────────────────────
-RSYNC_FLAGS=(-avz --delete -e "$RSYNC_RSH")
+RSYNC_FLAGS=(-avz --checksum --delete -e "$RSYNC_RSH")
 [[ $DRY_RUN -eq 1 ]] && RSYNC_FLAGS+=(--dry-run)
 
 rsync "${RSYNC_FLAGS[@]}" \
