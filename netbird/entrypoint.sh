@@ -4,9 +4,6 @@ set -e
 NTFY_URL="http://172.29.0.10:80"
 NTFY_TOPIC="${NTFY_TOPIC:-vpn-alerts}"
 INSTANCE="${VPN_INSTANCE_NAME:-netbird}"
-BACKOFF_STEP=0
-CONSECUTIVE_FAILURES=0
-DISCONNECT_TS=""
 
 log() { echo "[vpn-${INSTANCE}] $*"; }
 
@@ -19,23 +16,8 @@ notify() {
         -d "${msg}" 2>/dev/null || log "WARNING: ntfy unreachable"
 }
 
-backoff_sleep() {
-    local delays="15 30 60 120 300"
-    local delay
-    delay=$(echo "${delays}" | tr ' ' '\n' | sed -n "$((BACKOFF_STEP + 1))p")
-    [ -z "${delay}" ] && delay=300
-    log "Retrying in ${delay}s (attempt $((BACKOFF_STEP + 1)))"
-    sleep "${delay}"
-    BACKOFF_STEP=$((BACKOFF_STEP + 1))
-}
-
-reset_backoff() {
-    BACKOFF_STEP=0
-    CONSECUTIVE_FAILURES=0
-}
-
 configure() {
-    log "Starting Netbird client"
+    log "Starting Netbird client (daemon mode)"
     log "CIDRs: ${INSTANCE_CIDRS}"
 
     sysctl -w net.ipv4.ip_forward=1 2>/dev/null || \
@@ -43,20 +25,10 @@ configure() {
     sysctl -w net.ipv4.tcp_mtu_probing=1 2>/dev/null || true
 }
 
-connect() {
-    log "Running netbird up"
-    local mgmt_args=""
-    if [ -n "${NB_MANAGEMENT_URL}" ]; then
-        mgmt_args="--management-url ${NB_MANAGEMENT_URL}"
-    fi
-
-    netbird up --setup-key "${NB_SETUP_KEY}" ${mgmt_args} \
-        --foreground-mode 2>&1 &
-    NB_PID=$!
-
+wait_for_wt0() {
     log "Waiting for wt0 interface..."
     local i=0
-    while [ $i -lt 60 ]; do
+    while [ $i -lt 120 ]; do
         if ip link show wt0 >/dev/null 2>&1; then
             local wt_ip
             wt_ip=$(ip -4 addr show wt0 2>/dev/null \
@@ -66,25 +38,11 @@ connect() {
                 return 0
             fi
         fi
-        if ! kill -0 "${NB_PID}" 2>/dev/null; then
-            log "ERROR: netbird process exited"
-            return 1
-        fi
         sleep 1
         i=$((i + 1))
     done
-
-    log "ERROR: wt0 did not come up within 60s"
+    log "ERROR: wt0 did not come up within 120s"
     return 1
-}
-
-disconnect() {
-    netbird down 2>/dev/null || true
-    if [ -n "${NB_PID}" ]; then
-        kill "${NB_PID}" 2>/dev/null || true
-        wait "${NB_PID}" 2>/dev/null || true
-        NB_PID=""
-    fi
 }
 
 setup_routing() {
@@ -94,7 +52,8 @@ setup_routing() {
         cidr=$(echo "$cidr" | tr -d ' ')
         if [ -n "$cidr" ]; then
             log "  route add ${cidr} dev wt0"
-            ip route add "${cidr}" dev wt0 2>/dev/null || log "  (route exists)"
+            ip route replace "${cidr}" dev wt0 2>/dev/null || \
+                log "  (route exists or failed)"
         fi
     done
     unset IFS
@@ -112,13 +71,31 @@ setup_routing() {
     ip route
 }
 
+setup_dns_proxy() {
+    local wt_ip eth_ip
+    wt_ip=$(ip -4 addr show wt0 | awk '/inet / {split($2,a,"/"); print a[1]; exit}')
+    eth_ip=$(ip -4 addr show eth0 | awk '/inet / {split($2,a,"/"); print a[1]; exit}')
+
+    if [ -z "${wt_ip}" ] || [ -z "${eth_ip}" ]; then
+        log "WARNING: could not determine wt0 or eth0 IP for DNS proxy"
+        return
+    fi
+
+    log "Exposing Netbird DNS on bridge: ${eth_ip}:53 -> ${wt_ip}:53"
+    iptables -t nat -A PREROUTING -i eth0 -p udp --dport 53 \
+        -j DNAT --to "${wt_ip}:53"
+    iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 53 \
+        -j DNAT --to "${wt_ip}:53"
+    iptables -A INPUT -i eth0 -p udp --dport 53 -j ACCEPT
+    iptables -A INPUT -i eth0 -p tcp --dport 53 -j ACCEPT
+
+    log "Writing DNS IP ${eth_ip} to /shared/${INSTANCE}-dns-ip"
+    echo "${eth_ip}" > "/shared/${INSTANCE}-dns-ip"
+}
+
 monitor_wt0() {
     while ip link show wt0 >/dev/null 2>&1; do
         sleep 10
-        if ! kill -0 "${NB_PID}" 2>/dev/null; then
-            log "WARNING: netbird process died"
-            return 1
-        fi
     done
 }
 
@@ -126,41 +103,26 @@ monitor_wt0() {
 
 configure
 
-while true; do
-    disconnect
+# Start the official Netbird daemon entrypoint in background.
+# This runs 'netbird service run' + 'netbird up' with full
+# daemon features: DNS resolver, network routes, management socket.
+/usr/local/bin/netbird-entrypoint.sh &
+NB_PID=$!
 
-    if connect; then
-        setup_routing
-        reset_backoff
+if wait_for_wt0; then
+    setup_routing
+    setup_dns_proxy
+    notify "${INSTANCE} VPN Up" "Netbird connected."
+    log "Initial connection established"
 
-        if [ -n "${DISCONNECT_TS}" ]; then
-            local_downtime=$(( $(date +%s) - DISCONNECT_TS ))
-            notify "${INSTANCE} VPN Up" \
-                "Netbird reconnected. Downtime: ${local_downtime}s."
-            DISCONNECT_TS=""
-        else
-            log "Initial connection established"
-        fi
+    monitor_wt0
 
-        monitor_wt0
+    log "wt0 lost — tunnel disconnected"
+    notify "${INSTANCE} VPN Down" "Netbird tunnel lost."
+fi
 
-        DISCONNECT_TS=$(date +%s)
-        log "wt0 lost — tunnel disconnected"
-        notify "${INSTANCE} VPN Down" "Netbird tunnel lost. Reconnecting..."
-    else
-        CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))
-        log "Connection failed (attempt ${CONSECUTIVE_FAILURES})"
-
-        if [ "${CONSECUTIVE_FAILURES}" -eq 3 ]; then
-            notify "${INSTANCE} VPN Failing" \
-                "Netbird reconnection failing after ${CONSECUTIVE_FAILURES} attempts" "urgent"
-        fi
-
-        if [ -z "${DISCONNECT_TS}" ]; then
-            DISCONNECT_TS=$(date +%s)
-            notify "${INSTANCE} VPN Down" "Netbird connection failed. Retrying..."
-        fi
-
-        backoff_sleep
-    fi
-done
+# If we get here, the tunnel died. Kill the daemon and exit.
+# Docker restart policy will restart the container.
+kill "${NB_PID}" 2>/dev/null || true
+wait "${NB_PID}" 2>/dev/null || true
+exit 1

@@ -2,27 +2,13 @@
 set -e
 
 MULLVAD_DNS="${DEFAULT_DNS:-1.1.1.1}"
-SHARED_DNS_FILE="/shared/company-dns-ip"
+INSTANCES_JSON="/shared/vpn-instances.json"
 CONF="/etc/dnsmasq.conf"
 
 log() { echo "[dnsmasq] $*"; }
 
-log "Waiting for company DNS IP from L2TP container..."
-COMPANY_DNS=""
-for i in $(seq 1 60); do
-    if [ -f "${SHARED_DNS_FILE}" ]; then
-        COMPANY_DNS=$(cat "${SHARED_DNS_FILE}" | tr -d '[:space:]')
-        if [ -n "${COMPANY_DNS}" ]; then
-            log "Got company DNS: ${COMPANY_DNS}"
-            break
-        fi
-    fi
-    sleep 2
-done
-
-if [ -z "${COMPANY_DNS}" ]; then
-    log "WARNING: No company DNS received after 120s. Using Mullvad-only DNS."
-fi
+log "Waiting for VPN instance DNS files..."
+sleep 10
 
 log "Generating dnsmasq.conf"
 cat > "${CONF}" <<EOF
@@ -31,29 +17,43 @@ cache-size=150
 server=${MULLVAD_DNS}
 EOF
 
-if [ -n "${COMPANY_DNS}" ] && [ -n "${COMPANY_DOMAIN}" ]; then
-    IFS=','
-    for domain in ${COMPANY_DOMAIN}; do
-        domain=$(echo "$domain" | tr -d ' ')
-        if [ -n "$domain" ]; then
-            echo "server=/${domain}/${COMPANY_DNS}" >> "${CONF}"
-            log "  ${domain} -> ${COMPANY_DNS}"
-        fi
-    done
-    unset IFS
-fi
+if [ -f "${INSTANCES_JSON}" ]; then
+    for row in $(jq -c '.[]' "${INSTANCES_JSON}"); do
+        local_name=$(echo "$row" | jq -r '.name')
+        local_ip=$(echo "$row" | jq -r '.ip')
+        local_domains=$(echo "$row" | jq -r '.dns_domains[]' 2>/dev/null)
+        local_dns_file="/shared/${local_name}-dns-ip"
 
-L2TP_GW="172.29.0.20"
-if [ -n "${COMPANY_CIDRS}" ]; then
-    log "Adding routes to company CIDRs via ${L2TP_GW}"
-    IFS=','
-    for cidr in ${COMPANY_CIDRS}; do
-        cidr=$(echo "$cidr" | tr -d ' ')
-        if [ -n "$cidr" ]; then
-            ip route add "$cidr" via "$L2TP_GW" 2>/dev/null && log "  route: ${cidr} via ${L2TP_GW}" || log "  route: ${cidr} already exists or failed"
+        [ -z "${local_domains}" ] && continue
+
+        local_dns=""
+        if [ -f "${local_dns_file}" ]; then
+            local_dns=$(cat "${local_dns_file}" | tr -d '[:space:]')
         fi
+
+        if [ -z "${local_dns}" ]; then
+            log "WARNING: No DNS IP for instance '${local_name}', skipping domains"
+            continue
+        fi
+
+        for domain in ${local_domains}; do
+            echo "server=/${domain}/${local_dns}" >> "${CONF}"
+            log "  ${domain} -> ${local_dns} (via ${local_name})"
+        done
     done
-    unset IFS
+
+    log "Adding routes to VPN instances"
+    for row in $(jq -c '.[]' "${INSTANCES_JSON}"); do
+        local_ip=$(echo "$row" | jq -r '.ip')
+        local_name=$(echo "$row" | jq -r '.name')
+        for cidr in $(echo "$row" | jq -r '.cidrs[]'); do
+            ip route add "${cidr}" via "${local_ip}" 2>/dev/null && \
+                log "  route: ${cidr} via ${local_ip} (${local_name})" || \
+                log "  route: ${cidr} already exists or failed"
+        done
+    done
+else
+    log "WARNING: No ${INSTANCES_JSON} found. Mullvad-only DNS."
 fi
 
 log "Default DNS: ${MULLVAD_DNS}"

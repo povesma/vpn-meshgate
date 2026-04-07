@@ -1,7 +1,5 @@
 #!/bin/sh
 
-L2TP_IP="172.29.0.20"
-
 log() { echo "[route-init] $*"; }
 
 # Route Tailscale WireGuard/STUN traffic directly via host, bypassing Mullvad.
@@ -19,6 +17,9 @@ ip rule add fwmark 0x80000/0xff0000 lookup 201 priority 100 2>/dev/null && \
 ip rule add to 100.64.0.0/10 lookup 52 priority 100 2>/dev/null && \
     log "  rule: 100.64.0.0/10 -> table 52 (priority 100)" || \
     log "  (rule already exists)"
+iptables -A OUTPUT -m mark --mark 0x80000/0xff0000 -o eth0 -j ACCEPT 2>/dev/null && \
+    log "  iptables: fwmark 0x80000 -> ACCEPT on eth0" || \
+    log "  (iptables fwmark rule already exists)"
 
 log "Waiting for gluetun VPN to be ready..."
 for i in $(seq 1 60); do
@@ -29,35 +30,35 @@ for i in $(seq 1 60); do
     sleep 2
 done
 
-ALL_VPN_CIDRS="${COMPANY_CIDRS}${EXTRA_VPN_CIDRS:+,${EXTRA_VPN_CIDRS}}"
+INSTANCES_JSON="/shared/vpn-instances.json"
 
-if [ -z "${ALL_VPN_CIDRS}" ]; then
-    log "No CIDRs to route (COMPANY_CIDRS and EXTRA_VPN_CIDRS both empty)"
-    exit 0
+if [ ! -f "${INSTANCES_JSON}" ]; then
+    log "No ${INSTANCES_JSON} found, nothing to route"
+    log "Route init complete. Sleeping to maintain routes on restart."
+    exec sleep infinity
 fi
 
-log "Adding VPN routes via L2TP (${L2TP_IP})"
-[ -n "${EXTRA_VPN_CIDRS}" ] && log "  extra CIDRs: ${EXTRA_VPN_CIDRS}"
-IFS=','
-for cidr in ${ALL_VPN_CIDRS}; do
-    cidr=$(echo "$cidr" | tr -d ' ')
-    if [ -n "$cidr" ]; then
-        ip route replace "${cidr}" via "${L2TP_IP}" dev eth0 && \
-            log "  route: ${cidr} -> ${L2TP_IP}" || \
+instance_count=$(jq length "${INSTANCES_JSON}")
+log "Routing ${instance_count} VPN instance(s) from ${INSTANCES_JSON}"
+
+for row in $(jq -c '.[]' "${INSTANCES_JSON}"); do
+    name=$(echo "$row" | jq -r '.name')
+    ip=$(echo "$row" | jq -r '.ip')
+    log "Instance '${name}' -> ${ip}"
+
+    for cidr in $(echo "$row" | jq -r '.cidrs[]'); do
+        ip route replace "${cidr}" via "${ip}" dev eth0 && \
+            log "  route: ${cidr} -> ${ip}" || \
             log "  WARNING: failed route for ${cidr}"
-        # Add policy rule so company traffic uses main table
-        # instead of WireGuard table 51820
         ip rule add to "${cidr}" lookup main priority 100 2>/dev/null && \
             log "  rule: ${cidr} -> main table (priority 100)" || \
             log "  (rule exists)"
-        # Allow gluetun firewall to send/receive company traffic
         iptables -A OUTPUT -o eth0 -d "${cidr}" -j ACCEPT 2>/dev/null && \
             log "  iptables OUTPUT: allow ${cidr}" || true
         iptables -A INPUT -i eth0 -s "${cidr}" -j ACCEPT 2>/dev/null && \
             log "  iptables INPUT: allow ${cidr}" || true
-    fi
+    done
 done
-unset IFS
 
 log "Final routing table:"
 ip route

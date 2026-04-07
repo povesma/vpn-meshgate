@@ -15,7 +15,7 @@ services:
       - FIREWALL_OUTBOUND_SUBNETS=172.29.0.0/24
       - DNS_UPSTREAM_RESOLVER_TYPE=plain
       - DNS_UPSTREAM_PLAIN_ADDRESSES=172.29.0.30:53
-      - DNS_REBINDING_PROTECTION_EXEMPT_HOSTNAMES=*.${COMPANY_DOMAIN}
+      - DNS_REBINDING_PROTECTION_EXEMPT_HOSTNAMES=${VPN_DNS_DOMAINS}
     sysctls:
       - net.ipv4.conf.all.src_valid_mark=1
       - net.ipv4.tcp_rmem=4096 262144 16777216
@@ -44,14 +44,12 @@ services:
     network_mode: service:gluetun
     cap_add:
       - NET_ADMIN
-    environment:
-      - COMPANY_CIDRS=${COMPANY_CIDRS}
-      - EXTRA_VPN_CIDRS=${EXTRA_VPN_CIDRS}
+    volumes:
+      - shared-config:/shared
+      - ./vpn-instances.json:/shared/vpn-instances.json:ro
     depends_on:
       gluetun:
         condition: service_healthy
-      l2tp-vpn:
-        condition: service_started
     restart: unless-stopped
 
   tailscale:
@@ -63,7 +61,7 @@ services:
     environment:
       - TS_AUTHKEY=${TS_AUTHKEY}
       - TS_HOSTNAME=${TS_HOSTNAME}
-      - TS_EXTRA_ARGS=--advertise-exit-node --advertise-routes=${COMPANY_CIDRS} --login-server=${HEADSCALE_URL}
+      - TS_EXTRA_ARGS=--advertise-exit-node --advertise-routes=${VPN_ADVERTISE_ROUTES} --login-server=${HEADSCALE_URL}
       - TS_USERSPACE=false
       - TS_AUTH_ONCE=false
       - TS_STATE_DIR=/var/lib/tailscale
@@ -77,58 +75,23 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  l2tp-vpn:
-    build: ./l2tp
-    container_name: l2tp-vpn
-    privileged: true
-    dns:
-      - 1.1.1.1
-      - 8.8.8.8
-    devices:
-      - /dev/ppp:/dev/ppp
-    environment:
-      - L2TP_SERVER=${L2TP_SERVER}
-      - L2TP_USERNAME=${L2TP_USERNAME}
-      - L2TP_PASSWORD=${L2TP_PASSWORD}
-      - L2TP_PSK=${L2TP_PSK}
-      - COMPANY_CIDRS=${COMPANY_CIDRS}
-      - EXTRA_VPN_CIDRS=${EXTRA_VPN_CIDRS}
-      - NTFY_TOPIC=${NTFY_TOPIC:-vpn-alerts}
-      - L2TP_CHECK_IP=${L2TP_CHECK_IP}
-    networks:
-      bridge_vpn:
-        ipv4_address: 172.29.0.20
-    volumes:
-      - shared-config:/shared
-    healthcheck:
-      test: ["CMD", "sh", "-c", "ip link show ppp0"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 60s
-    restart: unless-stopped
-
   dnsmasq:
     build: ./dns
     container_name: dnsmasq
     cap_add:
       - NET_ADMIN
-    environment:
-      - COMPANY_DOMAIN=${COMPANY_DOMAIN}
-      - COMPANY_CIDRS=${COMPANY_CIDRS}
     networks:
       bridge_vpn:
         ipv4_address: 172.29.0.30
     volumes:
       - shared-config:/shared
+      - ./vpn-instances.json:/shared/vpn-instances.json:ro
     healthcheck:
       test: ["CMD", "sh", "-c", "dig @127.0.0.1 example.com +short +time=2 +tries=1 >/dev/null"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 120s
-    depends_on:
-      - l2tp-vpn
     restart: unless-stopped
 
   ntfy:
@@ -152,9 +115,11 @@ services:
     build: ./healthcheck
     container_name: healthcheck
     network_mode: service:gluetun
+    volumes:
+      - shared-config:/shared:ro
+      - ./vpn-instances.json:/shared/vpn-instances.json:ro
     environment:
       - VPS_PUBLIC_IP=${VPS_PUBLIC_IP}
-      - L2TP_CHECK_IP=${L2TP_CHECK_IP}
       - CHECK_INTERVAL=${CHECK_INTERVAL:-30}
       - NTFY_TOPIC=${NTFY_TOPIC:-vpn-alerts}
     depends_on:
@@ -190,12 +155,12 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - switcher-data:/data
+      - shared-config:/shared:ro
+      - ./vpn-instances.json:/shared/vpn-instances.json:ro
     environment:
       - NTFY_CMD_TOPIC=${NTFY_CMD_TOPIC:-vpn-cmd}
       - NTFY_TOPIC=${NTFY_TOPIC:-vpn-alerts}
       - VPS_PUBLIC_IP=${VPS_PUBLIC_IP}
-      - L2TP_CHECK_IP=${L2TP_CHECK_IP}
-      - COMPANY_DOMAIN=${COMPANY_DOMAIN}
       - GLUETUN_API_KEY=${GLUETUN_API_KEY}
     depends_on:
       gluetun:
