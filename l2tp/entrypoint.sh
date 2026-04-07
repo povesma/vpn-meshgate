@@ -3,11 +3,12 @@ set -e
 
 NTFY_URL="http://172.29.0.10:80"
 NTFY_TOPIC="${NTFY_TOPIC:-vpn-alerts}"
+INSTANCE="${VPN_INSTANCE_NAME:-l2tp}"
 BACKOFF_STEP=0
 CONSECUTIVE_FAILURES=0
 DISCONNECT_TS=""
 
-log() { echo "[l2tp] $*"; }
+log() { echo "[vpn-${INSTANCE}] $*"; }
 
 notify() {
     local title="$1" msg="$2" priority="${3:-high}"
@@ -37,8 +38,7 @@ configure() {
     log "Starting L2TP/IPsec client"
     log "Server: ${L2TP_SERVER}"
     log "User:   ${L2TP_USERNAME}"
-    log "CIDRs:  ${COMPANY_CIDRS}"
-    log "Extra:  ${EXTRA_VPN_CIDRS:-none}"
+    log "CIDRs:  ${INSTANCE_CIDRS}"
 
     sysctl -w net.ipv4.tcp_mtu_probing=1 2>/dev/null || true
 
@@ -98,10 +98,11 @@ password ${L2TP_PASSWORD}
 EOF
     chmod 600 /etc/ppp/options.l2tpd.client
 
-    cat > /etc/ppp/ip-up <<'IPUP'
+    local dns_file="/shared/${INSTANCE}-dns-ip"
+    cat > /etc/ppp/ip-up <<IPUP
 #!/bin/sh
-if [ -n "$DNS1" ]; then
-    echo "$DNS1" > /shared/company-dns-ip
+if [ -n "\$DNS1" ]; then
+    echo "\$DNS1" > ${dns_file}
 fi
 IPUP
     chmod +x /etc/ppp/ip-up
@@ -113,9 +114,8 @@ cleanup_stale_state() {
     sleep 1
     ipsec down L2TP-PSK 2>/dev/null || true
 
-    ALL_VPN_CIDRS="${COMPANY_CIDRS}${EXTRA_VPN_CIDRS:+,${EXTRA_VPN_CIDRS}}"
     IFS=','
-    for cidr in ${ALL_VPN_CIDRS}; do
+    for cidr in ${INSTANCE_CIDRS}; do
         cidr=$(echo "$cidr" | tr -d ' ')
         [ -n "$cidr" ] && ip route del "${cidr}" dev ppp0 2>/dev/null || true
     done
@@ -178,8 +178,8 @@ setup_routing() {
     local company_dns=""
     local i=0
     while [ $i -lt 15 ]; do
-        if [ -f /shared/company-dns-ip ]; then
-            company_dns=$(cat /shared/company-dns-ip | tr -d '[:space:]')
+        if [ -f "/shared/${INSTANCE}-dns-ip" ]; then
+            company_dns=$(cat "/shared/${INSTANCE}-dns-ip" | tr -d '[:space:]')
             [ -n "${company_dns}" ] && break
         fi
         if [ -f /etc/ppp/resolv.conf ]; then
@@ -192,17 +192,15 @@ setup_routing() {
 
     if [ -n "${company_dns}" ]; then
         log "Company DNS from PPP: ${company_dns}"
-        echo "${company_dns}" > /shared/company-dns-ip
+        echo "${company_dns}" > "/shared/${INSTANCE}-dns-ip"
     else
         log "WARNING: No DNS received from PPP peer after 15s"
-        echo "" > /shared/company-dns-ip
+        echo "" > "/shared/${INSTANCE}-dns-ip"
     fi
 
-    ALL_VPN_CIDRS="${COMPANY_CIDRS}${EXTRA_VPN_CIDRS:+,${EXTRA_VPN_CIDRS}}"
-    log "Adding routes for VPN CIDRs"
-    [ -n "${EXTRA_VPN_CIDRS}" ] && log "  extra CIDRs: ${EXTRA_VPN_CIDRS}"
+    log "Adding routes for INSTANCE_CIDRS"
     IFS=','
-    for cidr in ${ALL_VPN_CIDRS}; do
+    for cidr in ${INSTANCE_CIDRS}; do
         cidr=$(echo "$cidr" | tr -d ' ')
         if [ -n "$cidr" ]; then
             log "  route add ${cidr} dev ppp0"
@@ -257,7 +255,7 @@ while true; do
 
         if [ -n "${DISCONNECT_TS}" ]; then
             local_downtime=$(( $(date +%s) - DISCONNECT_TS ))
-            notify "Company VPN Up" "L2TP reconnected. Downtime: ${local_downtime}s. IP: ${PPP_IP}"
+            notify "${INSTANCE} VPN Up" "L2TP reconnected. Downtime: ${local_downtime}s. IP: ${PPP_IP}"
             DISCONNECT_TS=""
         else
             log "Initial connection established"
@@ -267,19 +265,19 @@ while true; do
 
         DISCONNECT_TS=$(date +%s)
         log "ppp0 lost — tunnel disconnected"
-        notify "Company VPN Down" "L2TP tunnel lost. Reconnecting..."
+        notify "${INSTANCE} VPN Down" "L2TP tunnel lost. Reconnecting..."
     else
         CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))
         log "Connection failed (attempt ${CONSECUTIVE_FAILURES})"
 
         if [ "${CONSECUTIVE_FAILURES}" -eq 3 ]; then
-            notify "Company VPN Failing" \
+            notify "${INSTANCE} VPN Failing" \
                 "L2TP reconnection failing after ${CONSECUTIVE_FAILURES} attempts" "urgent"
         fi
 
         if [ -z "${DISCONNECT_TS}" ]; then
             DISCONNECT_TS=$(date +%s)
-            notify "Company VPN Down" "L2TP connection failed. Retrying..."
+            notify "${INSTANCE} VPN Down" "L2TP connection failed. Retrying..."
         fi
 
         backoff_sleep
