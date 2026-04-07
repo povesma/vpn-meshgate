@@ -1,0 +1,40 @@
+#!/bin/sh
+#
+# Pre-commit hook: prevent private data from being committed.
+#
+# Patterns are read from .githooks/blocked-patterns (one regex
+# per line). That file is gitignored — it never enters the repo.
+#
+# Install: git config core.hooksPath .githooks
+# Add patterns: echo 'my-secret-domain\.com' >> .githooks/blocked-patterns
+
+PATTERNS_FILE="$(git rev-parse --show-toplevel)/.githooks/blocked-patterns"
+
+if [ ! -f "${PATTERNS_FILE}" ]; then
+    exit 0
+fi
+
+ERRORS=0
+
+while IFS= read -r pattern; do
+    [ -z "${pattern}" ] && continue
+    case "${pattern}" in \#*) continue ;; esac
+
+    matches=$(git diff --cached --diff-filter=d -U0 -- . \
+        ':!.githooks/*' \
+        | grep -i "^+" \
+        | grep -v "^+++" \
+        | grep -iE "${pattern}" || true)
+    if [ -n "${matches}" ]; then
+        echo "BLOCKED: private data pattern '${pattern}' found:"
+        echo "${matches}" | head -5
+        echo ""
+        ERRORS=$((ERRORS + 1))
+    fi
+done < "${PATTERNS_FILE}"
+
+if [ "${ERRORS}" -gt 0 ]; then
+    echo "Commit rejected: ${ERRORS} private data pattern(s) detected."
+    echo "Sanitize the data and try again."
+    exit 1
+fi

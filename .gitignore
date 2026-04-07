@@ -26,5 +26,8 @@ docs/executive-test-report-*.md
 # Claude-mem session files
 claude-mem-*.md
 
+# Pre-commit hook patterns (contains private data)
+.githooks/blocked-patterns
+
 # RLM state
 .claude/rlm_state/
