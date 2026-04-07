@@ -1,5 +1,54 @@
 # Project Rules
 
+## Data Safety — Mandatory Pre-flight
+
+Before running ANY command, evaluate: "Can this command destroy
+or overwrite data that I cannot recover?" If yes, or if
+uncertain, STOP and execute this sequence:
+
+1. `git status` — if dirty, `git stash` or commit WIP first
+2. `cp -r . /tmp/backup-$(date +%s)` — full working copy
+
+This is not a guideline. This is a hard gate. No destructive
+command runs without a backup existing. "I'll be careful" is
+not a substitute.
+
+A command is destructive if it does ANY of these:
+- Overwrites files (rsync, cp, mv, redirects, generators)
+- Deletes files or directories (rm, git clean, docker prune)
+- Rewrites git history (filter-repo, rebase, reset, amend)
+- Modifies remote state (push --force, docker restart)
+- Replaces config on a running system (compose up, deploy)
+
+If a command appears on this list AND the working tree is
+dirty, the command MUST NOT run. No exceptions. No judgment
+calls. Commit or stash first, then proceed.
+
+## Container Restart Policy
+
+Docker Compose `up -d <service>` does NOT recreate a container
+when only `.env` or `env_file` contents changed — it compares
+the compose config hash, not file contents. A container that
+reads env vars from `.env` or `.env.vpn-*` will keep stale
+values after those files are updated on the VPS.
+
+**Always use `--force-recreate` when restarting containers:**
+```bash
+./rdocker.sh compose up -d --force-recreate <service>
+```
+
+Never use `compose restart` (reuses old container, ignores all
+config changes) or `compose up -d` without `--force-recreate`
+(may silently skip recreation).
+
+## Deployment Policy
+
+`./deploy-push.sh --force` bypasses all protected file prompts
+and silently overwrites production config on the VPS. This is an
+extraordinary action — never use it without explicit user
+confirmation. Default deploys must use `./deploy-push.sh` (no
+flags) which prompts before overwriting any protected file.
+
 ## Secrets Policy
 
 Secrets (passwords, API keys, private keys, PSKs, setup keys,
