@@ -45,7 +45,23 @@ wait_for_wt0() {
     return 1
 }
 
+cleanup_iptables() {
+    iptables -t nat -D POSTROUTING -o wt0 -j MASQUERADE 2>/dev/null || true
+    iptables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -o wt0 \
+        -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+    iptables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -i wt0 \
+        -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+    # DNS proxy rules
+    iptables -t nat -D PREROUTING -i eth0 -p udp --dport 53 \
+        -j DNAT 2>/dev/null || true
+    iptables -t nat -D PREROUTING -i eth0 -p tcp --dport 53 \
+        -j DNAT 2>/dev/null || true
+    iptables -D INPUT -i eth0 -p udp --dport 53 -j ACCEPT 2>/dev/null || true
+    iptables -D INPUT -i eth0 -p tcp --dport 53 -j ACCEPT 2>/dev/null || true
+}
+
 setup_routing() {
+    cleanup_iptables
     log "Adding routes for INSTANCE_CIDRS"
     IFS=','
     for cidr in ${INSTANCE_CIDRS}; do
@@ -100,6 +116,8 @@ monitor_wt0() {
 }
 
 # === Main ===
+
+trap 'log "SIGTERM received, shutting down"; cleanup_iptables; kill "${NB_PID}" 2>/dev/null || true; exit 0' TERM INT
 
 configure
 

@@ -122,6 +122,10 @@ cleanup_stale_state() {
     unset IFS
 
     iptables -t nat -D POSTROUTING -o ppp0 -j MASQUERADE 2>/dev/null || true
+    iptables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -o ppp0 \
+        -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+    iptables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -i ppp0 \
+        -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
 
     rm -f /var/run/xl2tpd/l2tp-control
     mkdir -p /var/run/xl2tpd
@@ -242,6 +246,8 @@ monitor_ppp0() {
 }
 
 # === Main ===
+
+trap 'log "SIGTERM received, shutting down"; cleanup_stale_state; exit 0' TERM INT
 
 configure
 

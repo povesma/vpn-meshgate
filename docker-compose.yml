@@ -118,6 +118,7 @@ services:
     volumes:
       - shared-config:/shared:ro
       - ./vpn-instances.json:/shared/vpn-instances.json:ro
+      - healthcheck-state:/state
     environment:
       - VPS_PUBLIC_IP=${VPS_PUBLIC_IP}
       - CHECK_INTERVAL=${CHECK_INTERVAL:-30}
@@ -138,11 +139,11 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - switcher-data:/data
-      - ${COMPOSE_PROJECT_DIR:-.}:${COMPOSE_PROJECT_DIR:-/project}:ro
+      - ${COMPOSE_PROJECT_DIR}:${COMPOSE_PROJECT_DIR}:ro
     environment:
       - NTFY_CMD_TOPIC=${NTFY_CMD_TOPIC:-vpn-cmd}
       - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-vpn}
-      - COMPOSE_PROJECT_DIR=${COMPOSE_PROJECT_DIR:-/home/sjohn/vpn}
+      - COMPOSE_PROJECT_DIR=${COMPOSE_PROJECT_DIR}
     depends_on:
       gluetun:
         condition: service_healthy
@@ -209,4 +210,5 @@ volumes:
   ts-test-state:
   ntfy-cache:
   shared-config:
+  healthcheck-state:
   switcher-data:

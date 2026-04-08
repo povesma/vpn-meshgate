@@ -4,9 +4,10 @@ INTERVAL="${CHECK_INTERVAL:-30}"
 NTFY_URL="http://127.0.0.1:80"
 TOPIC="${NTFY_TOPIC:-vpn-alerts}"
 IP_CHECK_URL="https://ifconfig.me"
-STATE_FILE="/tmp/vpn-health-state"
+STATE_DIR="/state"
+STATE_FILE="${STATE_DIR}/vpn-health-state"
 INSTANCES_JSON="/shared/vpn-instances.json"
-VPN_STATE_DIR="/tmp/vpn-instance-state"
+VPN_STATE_DIR="${STATE_DIR}/vpn-instance-state"
 
 log() { echo "[healthcheck] $(date '+%H:%M:%S') $*"; }
 
@@ -21,12 +22,18 @@ notify() {
         -d "${msg}" 2>/dev/null || log "WARNING: Failed to send notification"
 }
 
+mkdir -p "${VPN_STATE_DIR}"
+
+# Restore state from persistent volume (survives container restarts)
 mullvad_prev="unknown"
 tailscale_prev="unknown"
-
-mkdir -p "${VPN_STATE_DIR}"
-echo "mullvad=unknown" > "${STATE_FILE}"
-echo "tailscale=unknown" >> "${STATE_FILE}"
+if [ -f "${STATE_FILE}" ]; then
+    saved_mullvad=$(grep '^mullvad=' "${STATE_FILE}" | cut -d= -f2)
+    saved_tailscale=$(grep '^tailscale=' "${STATE_FILE}" | cut -d= -f2)
+    [ -n "${saved_mullvad}" ] && mullvad_prev="${saved_mullvad}"
+    [ -n "${saved_tailscale}" ] && tailscale_prev="${saved_tailscale}"
+    log "Restored state: mullvad=${mullvad_prev}, tailscale=${tailscale_prev}"
+fi
 
 log "Starting health check loop (interval: ${INTERVAL}s)"
 log "VPS public IP: ${VPS_PUBLIC_IP}"
@@ -62,6 +69,7 @@ while true; do
             notify "Mullvad VPN RECOVERED" "Mullvad tunnel is back up. Exit IP: ${public_ip}" "default"
         fi
         mullvad_prev="${mullvad_status}"
+        printf 'mullvad=%s\ntailscale=%s\n' "${mullvad_prev}" "${tailscale_prev}" > "${STATE_FILE}"
         log "Mullvad: ${mullvad_status} (IP: ${public_ip:-none})"
     fi
 
@@ -106,6 +114,7 @@ while true; do
             notify "Tailscale EXIT NODE RECOVERED" "tailscale0 interface is back. Exit node operational." "default"
         fi
         tailscale_prev="${tailscale_status}"
+        printf 'mullvad=%s\ntailscale=%s\n' "${mullvad_prev}" "${tailscale_prev}" > "${STATE_FILE}"
         log "Tailscale: ${tailscale_status}"
     fi
 

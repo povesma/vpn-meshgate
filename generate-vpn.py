@@ -17,6 +17,7 @@ OVERRIDE_FILE = "docker-compose.override.yml"
 JSON_FILE = "vpn-instances.json"
 BASE_IP = "172.29.0.101"
 VALID_TYPES = {"l2tp", "wireguard", "openvpn", "netbird"}
+NETBIRD_IMAGE = "netbirdio/netbird:v0.68.0"
 
 REQUIRED_FIELDS = {
     "l2tp": ["server", "credentials"],
@@ -201,7 +202,7 @@ def generate_override(instances):
                 nb_secrets["NB_MANAGEMENT_URL"] = inst["management_url"]
             env_file = generate_env_file(name, nb_secrets)
             svc = {
-                "image": "netbirdio/netbird:latest",
+                "image": NETBIRD_IMAGE,
                 "container_name": container,
                 "cap_add": ["NET_ADMIN", "SYS_ADMIN", "SYS_RESOURCE"],
                 "env_file": [env_file],

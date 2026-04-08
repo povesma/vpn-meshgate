@@ -60,11 +60,20 @@ connect() {
     return 1
 }
 
+cleanup_iptables() {
+    iptables -t nat -D POSTROUTING -o wg0 -j MASQUERADE 2>/dev/null || true
+    iptables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -o wg0 \
+        -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+    iptables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -i wg0 \
+        -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+}
+
 disconnect() {
     wg-quick down wg0 2>/dev/null || true
 }
 
 setup_routing() {
+    cleanup_iptables
     log "Adding routes for INSTANCE_CIDRS"
     IFS=','
     for cidr in ${INSTANCE_CIDRS}; do
@@ -108,6 +117,8 @@ monitor_wg0() {
 }
 
 # === Main ===
+
+trap 'log "SIGTERM received, shutting down"; cleanup_iptables; disconnect; exit 0' TERM INT
 
 configure
 

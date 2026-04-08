@@ -86,6 +86,14 @@ connect() {
     return 1
 }
 
+cleanup_iptables() {
+    iptables -t nat -D POSTROUTING -o tun0 -j MASQUERADE 2>/dev/null || true
+    iptables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -o tun0 \
+        -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+    iptables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -i tun0 \
+        -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+}
+
 disconnect() {
     if [ -f /tmp/openvpn.pid ]; then
         kill "$(cat /tmp/openvpn.pid)" 2>/dev/null || true
@@ -96,6 +104,7 @@ disconnect() {
 }
 
 setup_routing() {
+    cleanup_iptables
     log "Adding routes for INSTANCE_CIDRS"
     IFS=','
     for cidr in ${INSTANCE_CIDRS}; do
@@ -127,6 +136,8 @@ monitor_tun0() {
 }
 
 # === Main ===
+
+trap 'log "SIGTERM received, shutting down"; cleanup_iptables; disconnect; exit 0' TERM INT
 
 configure
 

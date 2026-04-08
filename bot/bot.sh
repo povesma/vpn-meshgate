@@ -11,6 +11,19 @@ INSTANCES_JSON="/shared/vpn-instances.json"
 
 log() { echo "[vpn-bot] $(date '+%H:%M:%S') $*"; }
 
+validate_instance_name() {
+    local name="$1"
+    # Reject empty, non-alphanumeric+hyphen, and names starting/ending with hyphen
+    case "${name}" in
+        ""|-*|*-)   return 1 ;;
+    esac
+    # Only allow lowercase alphanumeric and hyphens
+    case "${name}" in
+        *[!a-z0-9-]*) return 1 ;;
+    esac
+    return 0
+}
+
 reply() {
     local title="$1" msg="$2" priority="${3:-default}"
     log "REPLY: ${title} - ${msg}"
@@ -157,9 +170,13 @@ Send: mullvad <code>" "low"
 
 cmd_restart_instance() {
     local name="$1"
+    if ! validate_instance_name "${name}"; then
+        reply "Invalid Name" "Instance name must be lowercase alphanumeric and hyphens only."
+        return
+    fi
     local container="vpn-${name}"
     if [ -f "${INSTANCES_JSON}" ]; then
-        if ! jq -e ".[] | select(.name == \"${name}\")" "${INSTANCES_JSON}" >/dev/null 2>&1; then
+        if ! jq -e --arg n "${name}" '.[] | select(.name == $n)' "${INSTANCES_JSON}" >/dev/null 2>&1; then
             reply "Unknown Instance" "No VPN instance '${name}'. Send 'status' to see available instances."
             return
         fi
@@ -262,9 +279,13 @@ cmd_mullvad_switch() {
 
 cmd_disable_instance() {
     local name="$1"
+    if ! validate_instance_name "${name}"; then
+        reply "Invalid Name" "Instance name must be lowercase alphanumeric and hyphens only."
+        return
+    fi
     local container="vpn-${name}"
     if [ -f "${INSTANCES_JSON}" ]; then
-        if ! jq -e ".[] | select(.name == \"${name}\")" "${INSTANCES_JSON}" >/dev/null 2>&1; then
+        if ! jq -e --arg n "${name}" '.[] | select(.name == $n)' "${INSTANCES_JSON}" >/dev/null 2>&1; then
             reply "Unknown Instance" "No VPN instance '${name}'. Send 'status' to see available instances."
             return
         fi
