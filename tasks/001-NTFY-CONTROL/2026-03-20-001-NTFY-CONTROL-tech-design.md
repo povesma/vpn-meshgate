@@ -1,6 +1,6 @@
 # 001-NTFY-CONTROL: VPN Remote Control via ntfy - Technical Design
 
-**Status**: Draft
+**Status**: Complete
 **PRD**: [2026-03-20-001-NTFY-CONTROL-prd.md](2026-03-20-001-NTFY-CONTROL-prd.md)
 **Created**: 2026-03-20
 

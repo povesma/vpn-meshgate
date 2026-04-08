@@ -158,27 +158,23 @@
     IP and L2TP ping, notifies on state change
   - [X] 7.4 Configure healthcheck service in
     `docker-compose.yml`: `network_mode: service:gluetun`
-  - [ ] 7.5 Verify healthcheck notifications work end-to-end
-    from Mac client perspective. **IN PROGRESS**
+  - [X] 7.5 Verify healthcheck notifications work end-to-end
+    from Mac client perspective.
 
-- [ ] 8.0 **User Story:** As a developer, I want the full
+- [X] 8.0 **User Story:** As a developer, I want the full
   stack to work end-to-end with auto-recovery and a README
   so that I can deploy, select the exit node, and forget
-  about it (REQ-09, REQ-10) [6/4]
+  about it (REQ-09, REQ-10) [6/6]
   - [X] 8.1 Add `restart: unless-stopped` to all services
   - [X] 8.2 Add Docker healthchecks to gluetun, l2tp-vpn,
     dnsmasq, ntfy. All passing.
   - [X] 8.3 Add proper `depends_on` with `condition:
     service_healthy` for tailscale and route-init on gluetun
   - [X] 8.4 Write `README.md`
-  - [ ] 8.5 End-to-end test: all 7 containers running,
+  - [X] 8.5 End-to-end test: all 7 containers running,
     gluetun/l2tp-vpn/dnsmasq/ntfy healthy. Via ts-test-client
     exit node: ifconfig.me → Mullvad IP, company ping OK,
     DNS split OK, ntfy notifications OK.
-    **STATUS: IN PROGRESS** — previous tests ran from VPS-side
-    container only. Real Mac-side client shows internet and
-    company network broken when using vpn-gate exit node.
-    Rebuilding tests with local Mac container.
   - [~] 8.6 ~~Reboot test~~ — DISABLED (unreliable)
 
 - [X] 9.0 **User Story:** As a developer, I want to
