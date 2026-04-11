@@ -94,6 +94,18 @@ setup_routing() {
     iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -i wg0 \
         -j TCPMSS --clamp-mss-to-pmtu
 
+    log "Pinning WireGuard endpoint route via eth0 and setting default via wg0"
+    local endpoint_ip
+    endpoint_ip=$(wg show wg0 endpoints 2>/dev/null | awk '{print $2}' | cut -d: -f1 | head -1)
+    if [ -n "${endpoint_ip}" ]; then
+        ip route add "${endpoint_ip}/32" via 172.29.0.1 dev eth0 2>/dev/null || true
+        log "  pinned endpoint ${endpoint_ip} via eth0"
+    else
+        log "  WARNING: could not determine WireGuard endpoint IP"
+    fi
+    ip route replace default dev wg0
+    log "  default route → wg0"
+
     log "WireGuard client ready"
     ip route
 }

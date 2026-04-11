@@ -230,6 +230,18 @@ setup_routing() {
     iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -o ppp0 -j TCPMSS --clamp-mss-to-pmtu
     iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -i ppp0 -j TCPMSS --clamp-mss-to-pmtu
 
+    log "Pinning VPN server route via eth0 and setting default via ppp0"
+    local server_ip
+    server_ip=$(getent hosts "${L2TP_SERVER}" 2>/dev/null | awk '{print $1; exit}')
+    if [ -n "${server_ip}" ]; then
+        ip route add "${server_ip}/32" via 172.29.0.1 dev eth0 2>/dev/null || true
+        log "  pinned ${L2TP_SERVER} (${server_ip}) via eth0"
+    else
+        log "  WARNING: could not resolve ${L2TP_SERVER} for pinned route"
+    fi
+    ip route replace default dev ppp0
+    log "  default route → ppp0"
+
     log "L2TP/IPsec client ready"
     ip route
 }

@@ -83,6 +83,19 @@ setup_routing() {
     iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -i wt0 \
         -j TCPMSS --clamp-mss-to-pmtu
 
+    log "Pinning Netbird management server route via eth0 and setting default via wt0"
+    local mgmt_host mgmt_ip
+    mgmt_host=$(echo "${NB_MANAGEMENT_URL:-https://api.netbird.io}" | sed 's|https\?://||;s|:.*||;s|/.*||')
+    mgmt_ip=$(getent hosts "${mgmt_host}" 2>/dev/null | awk '{print $1; exit}')
+    if [ -n "${mgmt_ip}" ]; then
+        ip route add "${mgmt_ip}/32" via 172.29.0.1 dev eth0 2>/dev/null || true
+        log "  pinned ${mgmt_host} (${mgmt_ip}) via eth0"
+    else
+        log "  WARNING: could not resolve ${mgmt_host} for pinned route"
+    fi
+    ip route replace default dev wt0
+    log "  default route → wt0"
+
     log "Netbird client ready"
     ip route
 }
