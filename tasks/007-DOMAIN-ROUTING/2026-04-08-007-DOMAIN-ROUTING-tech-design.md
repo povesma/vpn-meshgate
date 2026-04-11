@@ -1,6 +1,6 @@
 # 007-DOMAIN-ROUTING: Domain-Based VPN Routing - Technical Design
 
-**Status**: Draft
+**Status**: Complete
 **PRD**: [007-DOMAIN-ROUTING-prd.md](2026-04-08-007-DOMAIN-ROUTING-prd.md)
 **Created**: 2026-04-08
 
