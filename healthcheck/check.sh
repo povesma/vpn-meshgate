@@ -75,18 +75,17 @@ while true; do
 
     if [ -f "${INSTANCES_JSON}" ]; then
         for row in $(jq -c '.[]' "${INSTANCES_JSON}"); do
-            local name check_ip
             name=$(echo "$row" | jq -r '.name')
             check_ip=$(echo "$row" | jq -r '.check_ip')
             [ -z "${check_ip}" ] || [ "${check_ip}" = "" ] && continue
 
-            local inst_status="up"
+            inst_status="up"
             if ! ping -c 1 -W 5 "${check_ip}" >/dev/null 2>&1; then
                 inst_status="down"
             fi
 
-            local prev_status="unknown"
-            local state_file="${VPN_STATE_DIR}/${name}"
+            prev_status="unknown"
+            state_file="${VPN_STATE_DIR}/${name}"
             [ -f "${state_file}" ] && prev_status=$(cat "${state_file}")
             if [ "${inst_status}" != "${prev_status}" ]; then
                 if [ "${inst_status}" = "down" ]; then
