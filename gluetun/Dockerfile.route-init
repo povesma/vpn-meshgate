@@ -1,5 +1,5 @@
 FROM alpine:3.21
-RUN apk add --no-cache iproute2 iptables wget jq bind-tools
+RUN apk add --no-cache iproute2 iptables wget jq bind-tools curl
 COPY init-routes.sh /init-routes.sh
 RUN chmod +x /init-routes.sh
 CMD ["/init-routes.sh"]

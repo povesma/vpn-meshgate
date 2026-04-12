@@ -32,6 +32,18 @@ for i in $(seq 1 60); do
     sleep 2
 done
 
+# Stop gluetun's built-in DNS server. Its DNS rebinding protection
+# silently drops CNAME chain responses (e.g. analytics.google.com).
+# With gluetun DNS stopped, port 53 is free and the existing DNAT
+# rule on tailscale0 forwards all DNS directly to dnsmasq, which
+# has no rebinding protection.
+log "Stopping gluetun DNS server (rebinding protection incompatible with CNAME domains)"
+curl -sf -X PUT -H 'Content-Type: application/json' \
+    -d '{"status":"stopped"}' \
+    http://127.0.0.1:8000/v1/dns/status >/dev/null 2>&1 && \
+    log "  gluetun DNS stopped" || \
+    log "  WARNING: failed to stop gluetun DNS"
+
 INSTANCES_JSON="/shared/vpn-instances.json"
 
 if [ ! -f "${INSTANCES_JSON}" ]; then
@@ -78,7 +90,7 @@ ip route
 
 # --- Domain-based routing ---
 
-DNS_SERVER="127.0.0.1"
+DNS_SERVER="172.29.0.30"
 DOMAIN_STATE_DIR="/tmp/domain-routes"
 MIN_POLL=30
 MAX_POLL=300

@@ -341,9 +341,12 @@ split DNS but routing is already handled by CIDRs.
 - `netbird/entrypoint.sh` — pin management server route via
   eth0, change default route to wt0 in `setup_routing()`
 
+- `docker-compose.yml` — enable gluetun HTTP control server,
+  remove `DNS_REBINDING_PROTECTION_EXEMPT_HOSTNAMES`
+- `.env.example` — remove `VPN_DNS_DOMAINS`
+
 **No changes needed**:
 - `dns/entrypoint.sh` — dnsmasq config unaffected
-- `docker-compose.yml` — no new services or volumes
 
 ## Dependencies
 
@@ -352,22 +355,55 @@ split DNS but routing is already handled by CIDRs.
 
 **No new runtime or external dependencies.**
 
-### Key Implementation Lesson
+### DNS Architecture: Disable Gluetun DNS, Use Dnsmasq Directly
 
-**Route-init must resolve via gluetun DNS (`127.0.0.1`), not
-dnsmasq directly (`172.29.0.30`).** Gluetun has a built-in DNS
-server (port 53) that caches responses separately from dnsmasq.
-Mac DNS queries go through Tailscale → gluetun DNS → dnsmasq.
-If route-init resolves via dnsmasq directly, it bypasses
-gluetun's cache and gets different IPs for CDN/geo-DNS domains
-(CloudFront, etc). Resolving via `127.0.0.1` ensures route-init
-sees the same cached answers as the Mac.
+Gluetun has a built-in DNS server (port 53) with DNS rebinding
+protection that silently drops CNAME chain responses (e.g.,
+`analytics.google.com` → CNAME → A record). This cannot be
+disabled via env var and the exemption list
+(`DNS_REBINDING_PROTECTION_EXEMPT_HOSTNAMES`) cannot cover all
+possible CNAME domains on the internet.
+
+**Solution**: Disable gluetun's DNS server at startup via its
+HTTP control API, so all DNS goes directly to dnsmasq through
+the existing DNAT rule on `tailscale0`.
+
+**DNS flow (after fix)**:
+```
+Mac → Tailscale → tailscale0:53 in gluetun namespace
+  → DNAT → dnsmasq (172.29.0.30:53)
+  → split DNS (company domains → company DNS, else → Mullvad)
+  → response back to Mac
+
+route-init → dig @172.29.0.30 → same dnsmasq
+```
+
+Both Mac and route-init use the same dnsmasq instance. No
+gluetun DNS in the middle. No rebinding protection. No CNAME
+issues. No CDN IP mismatch.
+
+**Changes required**:
+1. `docker-compose.yml`: enable gluetun HTTP control server
+   (`HTTP_CONTROL_SERVER_ADDRESS=:8000`)
+2. `gluetun/init-routes.sh`: at startup, call
+   `PUT http://127.0.0.1:8000/v1/dns/status {"status":"stopped"}`
+   to stop gluetun's DNS server
+3. `gluetun/init-routes.sh`: resolve via dnsmasq directly
+   (`DNS_SERVER=172.29.0.30`)
+4. `.env.example`: remove `VPN_DNS_DOMAINS` (no longer needed)
+5. `docker-compose.yml`: remove
+   `DNS_REBINDING_PROTECTION_EXEMPT_HOSTNAMES` (no longer needed)
+
+**Why this is safe**: Gluetun uses hardcoded IPs for VPN server
+connections (no DNS needed). Gluetun's health check uses its
+HTTP API at `127.0.0.1:9999` (no DNS needed). No container in
+the gluetun namespace depends on gluetun's DNS — they all can
+use dnsmasq via the Docker bridge.
 
 ## Security Considerations
 
-- `dig` queries go to gluetun's built-in DNS (`127.0.0.1`)
-  which forwards to dnsmasq — same resolver the Mac uses via
-  Tailscale, ensuring IP consistency for CDN/geo-DNS domains
+- `dig` queries go to dnsmasq (`172.29.0.30`) on the Docker
+  bridge — no external DNS leakage
 - Domain names in `vpn-instances.yaml` are not secrets — they
   appear in `vpn-instances.json` which is already synced to VPS
 - `/32` routes use the same iptables chains and policy routing

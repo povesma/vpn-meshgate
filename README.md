@@ -119,8 +119,15 @@ cp secrets/vpn-instances.yaml.example secrets/vpn-instances.yaml
 ```
 
 Each instance defines a VPN tunnel with its type, credentials, CIDRs,
-and optional DNS domains. Supported types: `l2tp`, `wireguard`,
-`openvpn`, `netbird`.
+optional DNS domains, and optional route domains. Supported types:
+`l2tp`, `wireguard`, `openvpn`, `netbird`.
+
+**Domain-based routing:** Use `route_domains` to route traffic to
+specific domains through a VPN instance. Route-init periodically
+resolves these domains and creates /32 routes for the resolved IPs.
+Use `dns_domains` for split DNS resolution (which DNS server answers)
+and `route_domains` for routing (which tunnel carries traffic).
+Both can be set independently or together.
 
 **Netbird note:** Netbird uses domain-based routing. Put only the
 overlay network CIDR (e.g. `10.75.0.0/16`) in `cidrs`. Add company
@@ -143,16 +150,10 @@ This reads `secrets/vpn-instances.yaml` and produces:
 ### 4. Update `.env` with Derived Values
 
 ```bash
-# All dns_domains from vpn-instances.yaml in *.domain format
-VPN_DNS_DOMAINS=*.company-a.com,*.company-b.com
-
 # All static CIDRs from vpn-instances.yaml, comma-separated
 # (Netbird domain-routed IPs don't need to be listed here)
 VPN_ADVERTISE_ROUTES=10.11.0.0/16,10.75.0.0/16
 ```
-
-`VPN_DNS_DOMAINS` is used by gluetun to allow private-IP DNS
-responses for company domains.
 
 `VPN_ADVERTISE_ROUTES` is used by Tailscale to advertise subnet
 routes to Headscale. Without this, private CIDRs are dropped by
@@ -209,16 +210,37 @@ dns:
 
   nameservers:
     global:
-      - 1.1.1.1
-    split:
-      company.example.com:
-        - 100.64.0.XX    # vpn-meshgate's Tailscale IP
+      - 100.64.0.XX    # vpn-meshgate's Tailscale IP
 
   search_domains:
     - company.example.com
 ```
 
+Set the global resolver to vpn-meshgate's Tailscale IP so all
+DNS queries go through dnsmasq (via DNAT). This ensures:
+- Split DNS works (company domains resolve via company DNS)
+- `route_domains` work (Mac and route-init resolve via the
+  same dnsmasq, getting consistent IPs for CDN domains)
+
+Do NOT add fallback public resolvers (e.g., `1.1.1.1`) —
+Tailscale MagicDNS may prefer them over the exit node, breaking
+domain-based routing for CDN domains.
+
 Restart Headscale after editing.
+
+### Gluetun Control Server Auth
+
+Route-init uses gluetun's HTTP control API to disable its
+built-in DNS server (which has rebinding protection that breaks
+CNAME chain domains). Create `gluetun/auth/config.toml`:
+
+```bash
+cp gluetun/auth/config.toml.example gluetun/auth/config.toml
+```
+
+The default config allows route-init to manage DNS without
+authentication. The control server is bound to `127.0.0.1`
+(localhost only, not accessible from outside the namespace).
 
 ## Verification
 
@@ -243,7 +265,6 @@ nslookup example.com                    # resolved via public DNS
 | `WIREGUARD_ADDRESSES` | Mullvad WireGuard address |
 | `MULLVAD_COUNTRY` | Mullvad server country |
 | `VPS_PUBLIC_IP` | VPS public IP (for Mullvad health check) |
-| `VPN_DNS_DOMAINS` | All company domains in `*.domain` format |
 | `VPN_ADVERTISE_ROUTES` | All VPN CIDRs for Tailscale |
 | `NTFY_TOPIC` | ntfy notification topic (default: `vpn-alerts`) |
 | `NTFY_CMD_TOPIC` | ntfy command topic (default: `vpn-cmd`) |
@@ -259,6 +280,7 @@ See `secrets/vpn-instances.yaml.example` for the full format.
 | `type` | yes | `l2tp`, `wireguard`, `openvpn`, or `netbird` |
 | `cidrs` | yes | CIDRs to route through this tunnel |
 | `dns_domains` | no | Domains for split DNS via this tunnel |
+| `route_domains` | no | Domains whose resolved IPs route through this tunnel |
 | `check_ip` | no | IP to ping for health monitoring |
 | `server` | l2tp | VPN server hostname/IP |
 | `config_file` | wg/ovpn | Path to WireGuard or OpenVPN config |
@@ -307,8 +329,7 @@ Subscribe to `NTFY_CMD_TOPIC` (default: `vpn-cmd`) the same way.
 
 1. Edit `secrets/vpn-instances.yaml`
 2. Run `python3 generate-vpn.py`
-3. Update `VPN_DNS_DOMAINS` and `VPN_ADVERTISE_ROUTES` in `.env`
-   if CIDRs or domains changed
+3. Update `VPN_ADVERTISE_ROUTES` in `.env` if CIDRs changed
 4. Deploy:
    ```bash
    ./deploy-push.sh

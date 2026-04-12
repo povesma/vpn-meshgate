@@ -149,6 +149,28 @@
     `wt0` [verify: code-only]
     → verified via e2e traceroute [live] (2026-04-11)
 
+- [X] 5c.0 **User Story:** As a VPN user, I want DNS to bypass
+  gluetun's rebinding protection so that all domains (including
+  CNAME chains) resolve correctly for domain-based routing [5/5]
+  - [X] 5c.1 In `docker-compose.yml`, enable gluetun HTTP
+    control server on `127.0.0.1:8000` with
+    `auth: none` (localhost-only, no auth needed)
+    [verify: code-only]
+  - [X] 5c.2 In `docker-compose.yml`, keep
+    `DNS_REBINDING_PROTECTION_EXEMPT_HOSTNAMES` as fallback
+    until DNS stop is confirmed working [verify: code-only]
+  - [X] 5c.3 In `gluetun/init-routes.sh`, after gluetun is
+    healthy, stop gluetun's DNS server via `curl -X PUT`
+    to the control API. Change `DNS_SERVER` to
+    `172.29.0.30` (dnsmasq) [verify: code-only]
+  - [X] 5c.4 Add `curl` to `gluetun/Dockerfile.route-init`
+    (Alpine `wget` only supports GET/POST, gluetun API
+    needs PUT) [verify: code-only]
+  - [X] 5c.5 Create `gluetun/auth/config.toml` on VPS with
+    `auth = "none"` role for DNS endpoints
+    [verify: manual-run-user]
+    → gluetun DNS stopped successfully [live] (2026-04-12)
+
 - [X] 6.0 **User Story:** As a VPN user, I want to deploy and
   verify domain-based routing end-to-end so that the feature
   is confirmed working [4/4]
