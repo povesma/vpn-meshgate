@@ -1,6 +1,6 @@
 # 006-MULTI-INSTANCE-VPN: Multi-Instance VPN Routing - Technical Design
 
-**Status**: Draft
+**Status**: Complete
 **PRD**: [006-MULTI-INSTANCE-VPN-prd.md](2026-04-05-006-MULTI-INSTANCE-VPN-prd.md)
 **Created**: 2026-04-05
 
