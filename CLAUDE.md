@@ -74,6 +74,27 @@ When a generated file needs to pass credentials to a container,
 use `env_file:` directives pointing to `.env.*` files — never
 inline `environment:` values containing secrets.
 
+## Documentation Sanitization
+
+Planning artifacts (PRDs, tech designs, tasks, evidence notes,
+ADRs, READMEs) must contain **no private data** — anything tied
+to a specific deployment, customer, environment, or person.
+This includes (non-exhaustive): domain names, hostnames, IPs,
+CIDRs, account IDs, tenant IDs, paths, usernames, ticket
+numbers, internal service names.
+
+Use placeholders. RFC 5737 / RFC 2606 are fine for IPs and
+domains; for everything else, `<descriptor>` works
+(`<gateway-host>`, `<corp-cidr>`, `<tenant-id>`).
+
+**Working-state exception**: while a task is in progress,
+private values may appear in drafts to keep reasoning concrete.
+Before the task closes (PRD/tech-design status flipped to
+Complete, or commit), sanitize. The pre-commit hook is the
+last line of defense, not the first.
+
+If unsure whether a value is private: assume yes, mask it.
+
 ## Private Data Leak Prevention
 
 A pre-commit hook (`.githooks/pre-commit`) blocks commits

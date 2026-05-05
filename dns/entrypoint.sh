@@ -98,4 +98,31 @@ log "Config:"
 cat "${CONF}"
 
 log "Starting dnsmasq"
-exec dnsmasq --no-daemon --log-queries --conf-file="${CONF}"
+dnsmasq --no-daemon --log-queries --conf-file="${CONF}" &
+DNSMASQ_PID=$!
+log "dnsmasq PID=${DNSMASQ_PID}"
+
+trap 'kill -TERM "${DNSMASQ_PID}" 2>/dev/null; exit 0' TERM INT
+
+snapshot_dns_files() {
+    for f in /shared/*-dns-ip; do
+        [ -f "${f}" ] || continue
+        printf '%s:%s ' "${f}" "$(stat -c '%Y' "${f}" 2>/dev/null)"
+    done
+}
+
+watch_dns_files() {
+    last_state="$(snapshot_dns_files)"
+    while kill -0 "${DNSMASQ_PID}" 2>/dev/null; do
+        sleep 5
+        new_state="$(snapshot_dns_files)"
+        if [ "${new_state}" != "${last_state}" ]; then
+            log "DNS-IP file change detected; flushing dnsmasq cache (SIGHUP)"
+            kill -HUP "${DNSMASQ_PID}" 2>/dev/null || true
+            last_state="${new_state}"
+        fi
+    done
+}
+
+watch_dns_files &
+wait "${DNSMASQ_PID}"
