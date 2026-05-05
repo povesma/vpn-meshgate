@@ -8,6 +8,7 @@ RUN apk add --no-cache \
     iptables \
     iputils-ping \
     curl \
+    bind-tools \
     && mkdir -p /var/run/xl2tpd \
     && touch /var/run/xl2tpd/l2tp-control
 

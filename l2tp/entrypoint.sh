@@ -8,6 +8,12 @@ BACKOFF_STEP=0
 CONSECUTIVE_FAILURES=0
 DISCONNECT_TS=""
 
+: "${BOOTSTRAP_DNS_PRIMARY:=1.1.1.1}"
+: "${BOOTSTRAP_DNS_SECONDARY:=8.8.8.8}"
+: "${BOOTSTRAP_DNS_RETRIES:=5}"
+: "${BOOTSTRAP_DNS_BACKOFF:=5 10 20 40 60}"
+GATEWAY_IP=""
+
 log() { echo "[vpn-${INSTANCE}] $*"; }
 
 notify() {
@@ -32,6 +38,66 @@ backoff_sleep() {
 reset_backoff() {
     BACKOFF_STEP=0
     CONSECUTIVE_FAILURES=0
+}
+
+resolve_via() {
+    local host="$1" resolver="$2"
+    nslookup "${host}" "${resolver}" 2>/dev/null \
+        | awk '
+            /^Name:/ { in_answer = 1; next }
+            in_answer && /^Address: / {
+                ip = $2
+                sub(/#.*/, "", ip)
+                if (ip ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) { print ip; exit }
+            }
+        '
+}
+
+write_hosts_entry() {
+    local ip="$1" host="$2"
+    local filtered
+    filtered=$(grep -v "[[:space:]]${host}\$" /etc/hosts || true)
+    {
+        printf '%s\n' "${filtered}"
+        printf '%s\t%s\n' "${ip}" "${host}"
+    } > /etc/hosts
+}
+
+resolve_gateway() {
+    local host="${L2TP_SERVER}"
+    local attempt=0 ip=""
+    while [ "${attempt}" -lt "${BOOTSTRAP_DNS_RETRIES}" ]; do
+        attempt=$((attempt + 1))
+
+        log "Resolving ${host} via ${BOOTSTRAP_DNS_PRIMARY} (attempt ${attempt}/${BOOTSTRAP_DNS_RETRIES})"
+        ip=$(resolve_via "${host}" "${BOOTSTRAP_DNS_PRIMARY}")
+        if [ -n "${ip}" ]; then
+            GATEWAY_IP="${ip}"
+            write_hosts_entry "${ip}" "${host}"
+            log "Gateway ${host} -> ${ip} (via ${BOOTSTRAP_DNS_PRIMARY})"
+            return 0
+        fi
+
+        log "Resolving ${host} via ${BOOTSTRAP_DNS_SECONDARY} (attempt ${attempt}/${BOOTSTRAP_DNS_RETRIES})"
+        ip=$(resolve_via "${host}" "${BOOTSTRAP_DNS_SECONDARY}")
+        if [ -n "${ip}" ]; then
+            GATEWAY_IP="${ip}"
+            write_hosts_entry "${ip}" "${host}"
+            log "Gateway ${host} -> ${ip} (via ${BOOTSTRAP_DNS_SECONDARY})"
+            return 0
+        fi
+
+        local delay
+        delay=$(echo "${BOOTSTRAP_DNS_BACKOFF}" | tr ' ' '\n' | sed -n "${attempt}p")
+        [ -z "${delay}" ] && delay=60
+        if [ "${attempt}" -lt "${BOOTSTRAP_DNS_RETRIES}" ]; then
+            log "Both resolvers failed; sleeping ${delay}s before next attempt"
+            sleep "${delay}"
+        fi
+    done
+
+    log "FATAL: cannot resolve ${host} after ${BOOTSTRAP_DNS_RETRIES} attempts"
+    return 1
 }
 
 configure() {
@@ -231,13 +297,12 @@ setup_routing() {
     iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -i ppp0 -j TCPMSS --clamp-mss-to-pmtu
 
     log "Pinning VPN server route via eth0 and setting default via ppp0"
-    local server_ip
-    server_ip=$(getent hosts "${L2TP_SERVER}" 2>/dev/null | awk '{print $1; exit}')
+    local server_ip="${GATEWAY_IP}"
     if [ -n "${server_ip}" ]; then
         ip route add "${server_ip}/32" via 172.29.0.1 dev eth0 2>/dev/null || true
         log "  pinned ${L2TP_SERVER} (${server_ip}) via eth0"
     else
-        log "  WARNING: could not resolve ${L2TP_SERVER} for pinned route"
+        log "  WARNING: GATEWAY_IP empty for pinned route"
     fi
     ip route replace default dev ppp0
     log "  default route → ppp0"
@@ -264,6 +329,11 @@ trap 'log "SIGTERM received, shutting down"; cleanup_stale_state; exit 0' TERM I
 configure
 
 while true; do
+    if ! resolve_gateway; then
+        backoff_sleep
+        continue
+    fi
+
     cleanup_stale_state
     start_ipsec_daemon
 
