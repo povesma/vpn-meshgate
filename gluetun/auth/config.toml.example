@@ -1,10 +1,14 @@
+# Gluetun HTTP control server auth config.
+# Copy to config.toml: cp config.toml.example config.toml
+#
+# Route-init uses the control API to stop gluetun's built-in DNS
+# server at startup (its rebinding protection breaks CNAME domains).
+# The control server is bound to 127.0.0.1 (namespace-only access).
+
 [[roles]]
-name = "vpn-bot"
+name = "route-init"
 routes = [
-  "GET /v1/vpn/status",
-  "PUT /v1/vpn/status",
-  "GET /v1/vpn/settings",
-  "PUT /v1/vpn/settings",
+  "GET /v1/dns/status",
+  "PUT /v1/dns/status",
 ]
-auth = "apikey"
-apikey = "REPLACE_WITH_API_KEY"
+auth = "none"

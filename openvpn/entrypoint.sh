@@ -86,6 +86,14 @@ connect() {
     return 1
 }
 
+cleanup_iptables() {
+    iptables -t nat -D POSTROUTING -o tun0 -j MASQUERADE 2>/dev/null || true
+    iptables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -o tun0 \
+        -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+    iptables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -i tun0 \
+        -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+}
+
 disconnect() {
     if [ -f /tmp/openvpn.pid ]; then
         kill "$(cat /tmp/openvpn.pid)" 2>/dev/null || true
@@ -96,6 +104,7 @@ disconnect() {
 }
 
 setup_routing() {
+    cleanup_iptables
     log "Adding routes for INSTANCE_CIDRS"
     IFS=','
     for cidr in ${INSTANCE_CIDRS}; do
@@ -116,6 +125,26 @@ setup_routing() {
     iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -i tun0 \
         -j TCPMSS --clamp-mss-to-pmtu
 
+    log "Pinning OpenVPN remote route via eth0 and setting default via tun0"
+    local remote_ip
+    remote_ip=$(awk '/^remote / {print $2; exit}' /etc/openvpn/client.conf 2>/dev/null)
+    if [ -n "${remote_ip}" ]; then
+        # If remote is a hostname, resolve it
+        case "${remote_ip}" in
+            *[!0-9.]*)
+                remote_ip=$(getent hosts "${remote_ip}" 2>/dev/null | awk '{print $1; exit}')
+                ;;
+        esac
+    fi
+    if [ -n "${remote_ip}" ]; then
+        ip route add "${remote_ip}/32" via 172.29.0.1 dev eth0 2>/dev/null || true
+        log "  pinned remote ${remote_ip} via eth0"
+    else
+        log "  WARNING: could not determine OpenVPN remote IP"
+    fi
+    ip route replace default dev tun0
+    log "  default route → tun0"
+
     log "OpenVPN client ready"
     ip route
 }
@@ -127,6 +156,8 @@ monitor_tun0() {
 }
 
 # === Main ===
+
+trap 'log "SIGTERM received, shutting down"; cleanup_iptables; disconnect; exit 0' TERM INT
 
 configure
 

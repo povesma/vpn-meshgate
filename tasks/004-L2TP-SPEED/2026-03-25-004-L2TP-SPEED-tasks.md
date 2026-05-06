@@ -133,12 +133,12 @@
     node responses. Internet, company VPN, and DNS all verified
     working through vpn-gate exit node.
 
-- [ ] 8.0 **User Story**: As a developer, I want to verify
+- [X] 8.0 **User Story**: As a developer, I want to verify
   end-to-end speed and document results so the fix is confirmed
-  and measurable [3/0]
-  - [ ] 8.1 Run final measurements: Segment D (Mac → company),
+  and measurable [3/3]
+  - [X] 8.1 Run final measurements: Segment D (Mac → company),
     Mullvad reference, Tailscale raw throughput. Compare.
-  - [ ] 8.2 Document final speed numbers and findings in tech
+  - [X] 8.2 Document final speed numbers and findings in tech
     design.
-  - [ ] 8.3 Update PRD and tech design status to Complete.
+  - [X] 8.3 Update PRD and tech design status to Complete.
 

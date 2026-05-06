@@ -3,11 +3,18 @@ set -e
 
 NTFY_URL="http://172.29.0.10:80"
 NTFY_TOPIC="${NTFY_TOPIC:-vpn-alerts}"
+INSTANCE="${VPN_INSTANCE_NAME:-l2tp}"
 BACKOFF_STEP=0
 CONSECUTIVE_FAILURES=0
 DISCONNECT_TS=""
 
-log() { echo "[l2tp] $*"; }
+: "${BOOTSTRAP_DNS_PRIMARY:=1.1.1.1}"
+: "${BOOTSTRAP_DNS_SECONDARY:=8.8.8.8}"
+: "${BOOTSTRAP_DNS_RETRIES:=5}"
+: "${BOOTSTRAP_DNS_BACKOFF:=5 10 20 40 60}"
+GATEWAY_IP=""
+
+log() { echo "[vpn-${INSTANCE}] $*"; }
 
 notify() {
     local title="$1" msg="$2" priority="${3:-high}"
@@ -33,12 +40,71 @@ reset_backoff() {
     CONSECUTIVE_FAILURES=0
 }
 
+resolve_via() {
+    local host="$1" resolver="$2"
+    nslookup "${host}" "${resolver}" 2>/dev/null \
+        | awk '
+            /^Name:/ { in_answer = 1; next }
+            in_answer && /^Address: / {
+                ip = $2
+                sub(/#.*/, "", ip)
+                if (ip ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) { print ip; exit }
+            }
+        '
+}
+
+write_hosts_entry() {
+    local ip="$1" host="$2"
+    local filtered
+    filtered=$(grep -v "[[:space:]]${host}\$" /etc/hosts || true)
+    {
+        printf '%s\n' "${filtered}"
+        printf '%s\t%s\n' "${ip}" "${host}"
+    } > /etc/hosts
+}
+
+resolve_gateway() {
+    local host="${L2TP_SERVER}"
+    local attempt=0 ip=""
+    while [ "${attempt}" -lt "${BOOTSTRAP_DNS_RETRIES}" ]; do
+        attempt=$((attempt + 1))
+
+        log "Resolving ${host} via ${BOOTSTRAP_DNS_PRIMARY} (attempt ${attempt}/${BOOTSTRAP_DNS_RETRIES})"
+        ip=$(resolve_via "${host}" "${BOOTSTRAP_DNS_PRIMARY}")
+        if [ -n "${ip}" ]; then
+            GATEWAY_IP="${ip}"
+            write_hosts_entry "${ip}" "${host}"
+            log "Gateway ${host} -> ${ip} (via ${BOOTSTRAP_DNS_PRIMARY})"
+            return 0
+        fi
+
+        log "Resolving ${host} via ${BOOTSTRAP_DNS_SECONDARY} (attempt ${attempt}/${BOOTSTRAP_DNS_RETRIES})"
+        ip=$(resolve_via "${host}" "${BOOTSTRAP_DNS_SECONDARY}")
+        if [ -n "${ip}" ]; then
+            GATEWAY_IP="${ip}"
+            write_hosts_entry "${ip}" "${host}"
+            log "Gateway ${host} -> ${ip} (via ${BOOTSTRAP_DNS_SECONDARY})"
+            return 0
+        fi
+
+        local delay
+        delay=$(echo "${BOOTSTRAP_DNS_BACKOFF}" | tr ' ' '\n' | sed -n "${attempt}p")
+        [ -z "${delay}" ] && delay=60
+        if [ "${attempt}" -lt "${BOOTSTRAP_DNS_RETRIES}" ]; then
+            log "Both resolvers failed; sleeping ${delay}s before next attempt"
+            sleep "${delay}"
+        fi
+    done
+
+    log "FATAL: cannot resolve ${host} after ${BOOTSTRAP_DNS_RETRIES} attempts"
+    return 1
+}
+
 configure() {
     log "Starting L2TP/IPsec client"
     log "Server: ${L2TP_SERVER}"
     log "User:   ${L2TP_USERNAME}"
-    log "CIDRs:  ${COMPANY_CIDRS}"
-    log "Extra:  ${EXTRA_VPN_CIDRS:-none}"
+    log "CIDRs:  ${INSTANCE_CIDRS}"
 
     sysctl -w net.ipv4.tcp_mtu_probing=1 2>/dev/null || true
 
@@ -98,10 +164,11 @@ password ${L2TP_PASSWORD}
 EOF
     chmod 600 /etc/ppp/options.l2tpd.client
 
-    cat > /etc/ppp/ip-up <<'IPUP'
+    local dns_file="/shared/${INSTANCE}-dns-ip"
+    cat > /etc/ppp/ip-up <<IPUP
 #!/bin/sh
-if [ -n "$DNS1" ]; then
-    echo "$DNS1" > /shared/company-dns-ip
+if [ -n "\$DNS1" ]; then
+    echo "\$DNS1" > ${dns_file}
 fi
 IPUP
     chmod +x /etc/ppp/ip-up
@@ -113,15 +180,18 @@ cleanup_stale_state() {
     sleep 1
     ipsec down L2TP-PSK 2>/dev/null || true
 
-    ALL_VPN_CIDRS="${COMPANY_CIDRS}${EXTRA_VPN_CIDRS:+,${EXTRA_VPN_CIDRS}}"
     IFS=','
-    for cidr in ${ALL_VPN_CIDRS}; do
+    for cidr in ${INSTANCE_CIDRS}; do
         cidr=$(echo "$cidr" | tr -d ' ')
         [ -n "$cidr" ] && ip route del "${cidr}" dev ppp0 2>/dev/null || true
     done
     unset IFS
 
     iptables -t nat -D POSTROUTING -o ppp0 -j MASQUERADE 2>/dev/null || true
+    iptables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -o ppp0 \
+        -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+    iptables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -i ppp0 \
+        -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
 
     rm -f /var/run/xl2tpd/l2tp-control
     mkdir -p /var/run/xl2tpd
@@ -178,8 +248,8 @@ setup_routing() {
     local company_dns=""
     local i=0
     while [ $i -lt 15 ]; do
-        if [ -f /shared/company-dns-ip ]; then
-            company_dns=$(cat /shared/company-dns-ip | tr -d '[:space:]')
+        if [ -f "/shared/${INSTANCE}-dns-ip" ]; then
+            company_dns=$(cat "/shared/${INSTANCE}-dns-ip" | tr -d '[:space:]')
             [ -n "${company_dns}" ] && break
         fi
         if [ -f /etc/ppp/resolv.conf ]; then
@@ -192,17 +262,15 @@ setup_routing() {
 
     if [ -n "${company_dns}" ]; then
         log "Company DNS from PPP: ${company_dns}"
-        echo "${company_dns}" > /shared/company-dns-ip
+        echo "${company_dns}" > "/shared/${INSTANCE}-dns-ip"
     else
         log "WARNING: No DNS received from PPP peer after 15s"
-        echo "" > /shared/company-dns-ip
+        echo "" > "/shared/${INSTANCE}-dns-ip"
     fi
 
-    ALL_VPN_CIDRS="${COMPANY_CIDRS}${EXTRA_VPN_CIDRS:+,${EXTRA_VPN_CIDRS}}"
-    log "Adding routes for VPN CIDRs"
-    [ -n "${EXTRA_VPN_CIDRS}" ] && log "  extra CIDRs: ${EXTRA_VPN_CIDRS}"
+    log "Adding routes for INSTANCE_CIDRS"
     IFS=','
-    for cidr in ${ALL_VPN_CIDRS}; do
+    for cidr in ${INSTANCE_CIDRS}; do
         cidr=$(echo "$cidr" | tr -d ' ')
         if [ -n "$cidr" ]; then
             log "  route add ${cidr} dev ppp0"
@@ -228,6 +296,17 @@ setup_routing() {
     iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -o ppp0 -j TCPMSS --clamp-mss-to-pmtu
     iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -i ppp0 -j TCPMSS --clamp-mss-to-pmtu
 
+    log "Pinning VPN server route via eth0 and setting default via ppp0"
+    local server_ip="${GATEWAY_IP}"
+    if [ -n "${server_ip}" ]; then
+        ip route add "${server_ip}/32" via 172.29.0.1 dev eth0 2>/dev/null || true
+        log "  pinned ${L2TP_SERVER} (${server_ip}) via eth0"
+    else
+        log "  WARNING: GATEWAY_IP empty for pinned route"
+    fi
+    ip route replace default dev ppp0
+    log "  default route → ppp0"
+
     log "L2TP/IPsec client ready"
     ip route
 }
@@ -245,9 +324,16 @@ monitor_ppp0() {
 
 # === Main ===
 
+trap 'log "SIGTERM received, shutting down"; cleanup_stale_state; exit 0' TERM INT
+
 configure
 
 while true; do
+    if ! resolve_gateway; then
+        backoff_sleep
+        continue
+    fi
+
     cleanup_stale_state
     start_ipsec_daemon
 
@@ -257,7 +343,7 @@ while true; do
 
         if [ -n "${DISCONNECT_TS}" ]; then
             local_downtime=$(( $(date +%s) - DISCONNECT_TS ))
-            notify "Company VPN Up" "L2TP reconnected. Downtime: ${local_downtime}s. IP: ${PPP_IP}"
+            notify "${INSTANCE} VPN Up" "L2TP reconnected. Downtime: ${local_downtime}s. IP: ${PPP_IP}"
             DISCONNECT_TS=""
         else
             log "Initial connection established"
@@ -267,19 +353,19 @@ while true; do
 
         DISCONNECT_TS=$(date +%s)
         log "ppp0 lost — tunnel disconnected"
-        notify "Company VPN Down" "L2TP tunnel lost. Reconnecting..."
+        notify "${INSTANCE} VPN Down" "L2TP tunnel lost. Reconnecting..."
     else
         CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))
         log "Connection failed (attempt ${CONSECUTIVE_FAILURES})"
 
         if [ "${CONSECUTIVE_FAILURES}" -eq 3 ]; then
-            notify "Company VPN Failing" \
+            notify "${INSTANCE} VPN Failing" \
                 "L2TP reconnection failing after ${CONSECUTIVE_FAILURES} attempts" "urgent"
         fi
 
         if [ -z "${DISCONNECT_TS}" ]; then
             DISCONNECT_TS=$(date +%s)
-            notify "Company VPN Down" "L2TP connection failed. Retrying..."
+            notify "${INSTANCE} VPN Down" "L2TP connection failed. Retrying..."
         fi
 
         backoff_sleep

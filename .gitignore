@@ -1,7 +1,14 @@
 # Secrets - NEVER commit
 .env
+.env.vpn-*
+secrets/*
+!secrets/*.example
 *.conf
 gluetun/auth/config.toml
+
+# Generated files
+docker-compose.override.yml
+vpn-instances.json
 
 # Docker volumes
 data/

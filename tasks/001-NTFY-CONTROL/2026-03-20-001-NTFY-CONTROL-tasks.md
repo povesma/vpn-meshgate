@@ -117,21 +117,21 @@
     documenting available commands and how to subscribe to
     the `vpn-cmd` topic from the ntfy app.
 
-- [ ] 6.0 **User Story:** As a developer, I want end-to-end
+- [X] 6.0 **User Story:** As a developer, I want end-to-end
   verification so that I know all commands work from my
-  phone [4/0]
+  phone [4/4]
   - [X] 6.1 Deploy to VPS: `deploy-push.sh`, then
     `rdocker.sh compose up -d --build vpn-bot`. Verify
     container starts and shows healthy in `docker ps`.
     Verify "VPN Bot online" message appears in vpn-alerts.
-  - [ ] 6.2 Subscribe to `vpn-cmd` topic in ntfy app on
+  - [X] 6.2 Subscribe to `vpn-cmd` topic in ntfy app on
     phone (second subscription alongside `vpn-alerts`).
     Test read-only commands from phone: `ping`, `status`,
     `ip`, `help`, `dns test`. Verify responses arrive in
     `vpn-alerts`.
-  - [ ] 6.3 Test `restart company` from phone. Verify
+  - [X] 6.3 Test `restart company` from phone. Verify
     l2tp-vpn restarts and status response arrives.
-  - [ ] 6.4 Test `restart mullvad` from phone. Verify
+  - [X] 6.4 Test `restart mullvad` from phone. Verify
     warning arrives, send `confirm`, verify gluetun
     restarts and "VPN Bot online" message arrives after
     recovery.

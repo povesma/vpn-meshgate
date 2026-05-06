@@ -10,8 +10,8 @@
 REQUEST_FILE="/data/switch-request"
 RESULT_FILE="/data/switch-result"
 COMPOSE_PROJECT="${COMPOSE_PROJECT_NAME:-vpn}"
-COMPOSE_FILE="/project/docker-compose.yml"
 COMPOSE_HOST_DIR="${COMPOSE_PROJECT_DIR:-/project}"
+COMPOSE_FILE="${COMPOSE_HOST_DIR}/docker-compose.yml"
 NTFY_URL="http://172.29.0.10:80"
 NTFY_TOPIC="${NTFY_CMD_TOPIC:-vpn-cmd}"
 GLUETUN_CONTAINER="gluetun"
@@ -24,7 +24,7 @@ GLUETUN_DEPENDENTS="ntfy healthcheck route-init tailscale vpn-bot"
 log() { echo "[switcher] $(date '+%H:%M:%S') $*"; }
 
 compose() {
-    docker compose -f "${COMPOSE_FILE}" --env-file /project/.env --project-directory "${COMPOSE_HOST_DIR}" --project-name "${COMPOSE_PROJECT}" "$@"
+    docker compose -f "${COMPOSE_FILE}" --env-file "${COMPOSE_HOST_DIR}/.env" --project-directory "${COMPOSE_HOST_DIR}" --project-name "${COMPOSE_PROJECT}" "$@"
 }
 
 ntfy_reply() {

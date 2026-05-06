@@ -70,28 +70,28 @@
     on line 40: `log "Extra:  ${EXTRA_VPN_CIDRS:-none}"`
     [verify: code-only]
 
-- [ ] 4.0 **User Story:** As a VPN user, I want to deploy the
+- [X] 4.0 **User Story:** As a VPN user, I want to deploy the
   stack with `EXTRA_VPN_CIDRS=198.51.100.34/32` and verify
   end-to-end routing from my Mac so that the feature is
-  confirmed working [4/0]
-  - [ ] 4.1 Add `EXTRA_VPN_CIDRS=198.51.100.34/32` to `.env`
+  confirmed working [4/4]
+  - [X] 4.1 Add `EXTRA_VPN_CIDRS=198.51.100.34/32` to `.env`
     on VPS and redeploy the stack [verify: manual-run-user]
-  - [ ] 4.2 Check route-init logs for extra CIDR route/rule/
+  - [X] 4.2 Check route-init logs for extra CIDR route/rule/
     iptables entries:
     `docker logs route-init 2>&1 | grep 194.154`
     [verify: manual-run-user]
-  - [ ] 4.3 Check l2tp-vpn routing table includes the extra
+  - [X] 4.3 Check l2tp-vpn routing table includes the extra
     CIDR: `docker exec l2tp-vpn ip route | grep 194.154`
     [verify: manual-run-user]
-  - [ ] 4.4 From Mac via Tailscale exit node, verify traffic
+  - [X] 4.4 From Mac via Tailscale exit node, verify traffic
     to `198.51.100.34` goes through L2TP tunnel:
     `traceroute 198.51.100.34` or `curl` to a service on
     that IP [verify: manual-run-user]
 
-- [ ] 5.0 **User Story:** As a VPN user, I want the PRD and
+- [X] 5.0 **User Story:** As a VPN user, I want the PRD and
   tech design marked complete so that the feature is properly
-  closed out [2/0]
-  - [ ] 5.1 Update PRD status from Draft to Complete
+  closed out [2/2]
+  - [X] 5.1 Update PRD status from Draft to Complete
     [verify: code-only]
-  - [ ] 5.2 Update tech design status from Draft to Complete
+  - [X] 5.2 Update tech design status from Draft to Complete
     [verify: code-only]

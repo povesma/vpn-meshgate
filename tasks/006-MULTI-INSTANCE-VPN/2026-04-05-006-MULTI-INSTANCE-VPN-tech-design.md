@@ -1,6 +1,6 @@
 # 006-MULTI-INSTANCE-VPN: Multi-Instance VPN Routing - Technical Design
 
-**Status**: Draft
+**Status**: Complete
 **PRD**: [006-MULTI-INSTANCE-VPN-prd.md](2026-04-05-006-MULTI-INSTANCE-VPN-prd.md)
 **Created**: 2026-04-05
 
@@ -312,14 +312,47 @@ All entrypoints follow the same contract:
 - Reconnect: restart openvpn process
 
 **`netbird/entrypoint.sh`** — New:
-- `netbird up --setup-key $NB_SETUP_KEY --management-url $NB_MANAGEMENT_URL`
+- Runs the official `/usr/local/bin/netbird-entrypoint.sh` in
+  background (starts full daemon: `netbird service run` +
+  `netbird up`). This is required for DNS resolver, network
+  routes, and domain-based routing to work. `--foreground-mode`
+  disables these features and must NOT be used.
 - Wait for `wt0` interface to appear
 - Route `INSTANCE_CIDRS` over `wt0`
 - MASQUERADE + MSS clamping on `wt0`
-- Monitor: check `wt0` interface exists + `netbird status`
-- Reconnect: `netbird down && netbird up`
+- DNS proxy: DNAT port 53 from bridge IP (eth0) to Netbird
+  overlay IP (wt0), so dnsmasq can forward domain queries to
+  Netbird's DNS resolver. Writes bridge IP to
+  `/shared/{name}-dns-ip` for dnsmasq to discover.
+- Monitor: check `wt0` interface exists
+- On tunnel loss: kill daemon, exit. Docker restart policy
+  restarts the container.
 - Uses official `netbirdio/netbird` image; entrypoint mounted
   as override
+
+### Netbird Domain-Based Routing
+
+Netbird uses domain-based routing, not CIDR-based. The
+management server pushes domain routes (e.g. `git.company.com`)
+to peers. When Netbird's DNS resolver handles a query for a
+routed domain, it resolves the IP AND automatically adds it to
+WireGuard's allowed-IPs for the gateway peer. This means:
+
+- `cidrs` in vpn-instances.yaml should contain only the Netbird
+  overlay network (e.g. `10.75.0.0/16`), NOT the public IPs of
+  company services
+- `dns_domains` must list the company domain(s) so dnsmasq
+  forwards queries to the Netbird DNS resolver
+- Public IPs are routed dynamically — no need to list them in
+  `VPN_ADVERTISE_ROUTES` or Headscale
+
+**DNS resolution path for Netbird domains:**
+```
+Mac → Tailscale → dnsmasq (172.29.0.30)
+  → Netbird DNS (172.29.0.102:53, DNAT to 100.75.x.x:53)
+  → resolves domain + adds WireGuard route to gateway peer
+  → traffic flows: wt0 → gateway peer → destination
+```
 
 ### Component: `gluetun/init-routes.sh` (Modified)
 

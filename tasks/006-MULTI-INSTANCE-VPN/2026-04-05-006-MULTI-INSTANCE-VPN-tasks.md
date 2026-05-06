@@ -243,33 +243,39 @@
     server (from `/shared/{name}-dns-ip`) for each instance's
     domains [verify: code-only]
 
-- [ ] 9.0 **User Story:** As a VPN user, I want to deploy and
+- [X] 9.0 **User Story:** As a VPN user, I want to deploy and
   verify two simultaneous VPN instances on the VPS so that the
-  feature is confirmed working end-to-end [6/0]
-  - [ ] 9.1 Create `vpn-instances.yaml` on local machine with
+  feature is confirmed working end-to-end [6/6]
+  - [X] 9.1 Create `vpn-instances.yaml` on local machine with
     at least two instances (existing L2TP company + one more)
     [verify: manual-run-user]
-  - [ ] 9.2 Run `python3 generate-vpn.py` and verify it
+    → done as part of 007-DOMAIN-ROUTING deployment [live] (2026-04-11)
+  - [X] 9.2 Run `python3 generate-vpn.py` and verify it
     produces valid `docker-compose.override.yml` and
     `vpn-instances.json` [verify: manual-run-user]
-  - [ ] 9.3 Deploy to VPS: `./deploy-push.sh --force &&
+    → done as part of 007-DOMAIN-ROUTING deployment [live] (2026-04-11)
+  - [X] 9.3 Deploy to VPS: `./deploy-push.sh --force &&
     ./rdocker.sh compose up -d --build`
     [verify: manual-run-user]
-  - [ ] 9.4 Verify both VPN containers are running and tunnels
+    → done as part of 007-DOMAIN-ROUTING deployment [live] (2026-04-11)
+  - [X] 9.4 Verify both VPN containers are running and tunnels
     are up: `./rdocker.sh compose ps`, check logs for each
     instance [verify: manual-run-user]
-  - [ ] 9.5 Verify per-instance routing from Mac via Tailscale
+    → confirmed during 007 e2e verification [live] (2026-04-11)
+  - [X] 9.5 Verify per-instance routing from Mac via Tailscale
     exit node: `traceroute` to a CIDR from each instance
     confirms traffic goes through the correct tunnel
     [verify: manual-run-user]
-  - [ ] 9.6 Verify bot `status` command shows per-instance
+    → confirmed by user via traceroute [live] (2026-04-11)
+  - [X] 9.6 Verify bot `status` command shows per-instance
     health, `restart <name>` restarts only the named instance
     [verify: manual-run-user]
+    → confirmed during 007 e2e verification [live] (2026-04-11)
 
-- [ ] 10.0 **User Story:** As a VPN user, I want the PRD and
+- [X] 10.0 **User Story:** As a VPN user, I want the PRD and
   tech design marked complete so that the feature is properly
-  closed out [2/0]
-  - [ ] 10.1 Update PRD status from Draft to Complete
+  closed out [2/2]
+  - [X] 10.1 Update PRD status from Draft to Complete
     [verify: code-only]
-  - [ ] 10.2 Update tech design status from Draft to Complete
+  - [X] 10.2 Update tech design status from Draft to Complete
     [verify: code-only]

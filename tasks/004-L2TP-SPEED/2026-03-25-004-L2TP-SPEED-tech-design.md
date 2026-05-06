@@ -1,6 +1,6 @@
 # 004-L2TP-SPEED: Company VPN Speed Investigation & Fix — Technical Design
 
-**Status**: Draft
+**Status**: Complete
 **PRD**: [004-L2TP-SPEED-prd.md](2026-03-25-004-L2TP-SPEED-prd.md)
 **Created**: 2026-03-25
 

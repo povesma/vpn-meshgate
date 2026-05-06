@@ -27,8 +27,6 @@ iptables -t nat -A POSTROUTING -o tun0 -j MASQUERADE
 iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -o tailscale0 -j TCPMSS --set-mss 1240
 iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -i tailscale0 -j TCPMSS --set-mss 1240
 
-# Route Tailscale WireGuard traffic directly to internet, bypassing Mullvad VPN.
-# Tailscale marks its WireGuard handshake/STUN packets with fwmark 0x80000.
-# Without this, gluetun routes them through Mullvad (tun0), causing NAT that
-# breaks direct peer-to-peer connections and forces DERP relay.
-iptables -A OUTPUT -m mark --mark 0x80000/0xff0000 -o eth0 -j ACCEPT
+# Tailscale fwmark bypass rule (0x80000) is now applied by route-init
+# instead of here, because gluetun's firewall parser cannot handle
+# the mark match format and enters a restart loop.

@@ -3,6 +3,7 @@
 
 import ipaddress
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -17,6 +18,11 @@ OVERRIDE_FILE = "docker-compose.override.yml"
 JSON_FILE = "vpn-instances.json"
 BASE_IP = "172.29.0.101"
 VALID_TYPES = {"l2tp", "wireguard", "openvpn", "netbird"}
+NETBIRD_IMAGE = "netbirdio/netbird:0.68.1"
+DOMAIN_RE = re.compile(
+    r"^(?:\*\.)?[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?"
+    r"(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$"
+)
 
 REQUIRED_FIELDS = {
     "l2tp": ["server", "credentials"],
@@ -46,6 +52,7 @@ def load_config(path):
 def validate(instances):
     names = set()
     all_cidrs = []
+    all_route_domains = []
 
     for i, inst in enumerate(instances):
         label = inst.get("name", f"instance[{i}]")
@@ -86,6 +93,21 @@ def validate(instances):
                         fatal(f"{label}: credentials.{cred_field} is required for type '{vtype}'")
             elif not inst.get(field):
                 fatal(f"{label}: '{field}' is required for type '{vtype}'")
+
+        route_domains = inst.get("route_domains", [])
+        if route_domains:
+            if not isinstance(route_domains, list):
+                fatal(f"{label}: 'route_domains' must be a list")
+            for domain in route_domains:
+                if not domain or not isinstance(domain, str):
+                    fatal(f"{label}: route_domains entries must be non-empty strings")
+                if not DOMAIN_RE.match(domain):
+                    fatal(f"{label}: invalid route_domain '{domain}'")
+                domain_lower = domain.lower()
+                for existing_name, existing_domain in all_route_domains:
+                    if domain_lower == existing_domain:
+                        fatal(f"{label}: route_domain '{domain}' duplicates entry from '{existing_name}'")
+                all_route_domains.append((name, domain_lower))
 
 
 def assign_ips(instances):
@@ -201,7 +223,7 @@ def generate_override(instances):
                 nb_secrets["NB_MANAGEMENT_URL"] = inst["management_url"]
             env_file = generate_env_file(name, nb_secrets)
             svc = {
-                "image": "netbirdio/netbird:latest",
+                "image": NETBIRD_IMAGE,
                 "container_name": container,
                 "cap_add": ["NET_ADMIN", "SYS_ADMIN", "SYS_RESOURCE"],
                 "env_file": [env_file],
@@ -246,6 +268,7 @@ def generate_json(instances):
             "cidrs": inst["cidrs"],
             "check_ip": inst.get("check_ip", ""),
             "dns_domains": inst.get("dns_domains", []),
+            "route_domains": inst.get("route_domains", []),
             "container": inst["_container"],
         })
     return json.dumps(result, indent=2)

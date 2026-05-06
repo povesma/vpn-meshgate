@@ -1,6 +1,6 @@
 # 005-CUSTOM-ROUTES: Custom Address Routing via Company VPN - Technical Design
 
-**Status**: Draft
+**Status**: Complete
 **PRD**: [005-CUSTOM-ROUTES-prd.md](2026-04-05-005-CUSTOM-ROUTES-prd.md)
 **Created**: 2026-04-05
 
