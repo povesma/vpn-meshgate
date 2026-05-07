@@ -4,8 +4,19 @@ set -e
 MULLVAD_DNS="${DEFAULT_DNS:-1.1.1.1}"
 INSTANCES_JSON="/shared/vpn-instances.json"
 CONF="/etc/dnsmasq.conf"
+GLUETUN_DNS_API="${GLUETUN_DNS_API:-http://172.29.0.10:8000/v1/dns/status}"
 
 log() { echo "[dnsmasq] $*"; }
+
+flush_gluetun_dns() {
+    curl -sf --max-time 3 -X PUT \
+        -H 'Content-Type: application/json' \
+        -d '{"status":"stopped"}' "${GLUETUN_DNS_API}" >/dev/null 2>&1 || return 1
+    sleep 1
+    curl -sf --max-time 3 -X PUT \
+        -H 'Content-Type: application/json' \
+        -d '{"status":"running"}' "${GLUETUN_DNS_API}" >/dev/null 2>&1 || return 1
+}
 
 DNS_WAIT_TIMEOUT="${DNS_WAIT_TIMEOUT:-60}"
 
@@ -119,6 +130,11 @@ watch_dns_files() {
         if [ "${new_state}" != "${last_state}" ]; then
             log "DNS-IP file change detected; flushing dnsmasq cache (SIGHUP)"
             kill -HUP "${DNSMASQ_PID}" 2>/dev/null || true
+            if flush_gluetun_dns; then
+                log "Gluetun DNS cache flushed (stop/start cycle)"
+            else
+                log "WARNING: failed to flush gluetun DNS cache"
+            fi
             last_state="${new_state}"
         fi
     done
