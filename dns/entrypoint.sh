@@ -58,17 +58,20 @@ else
     log "No ${INSTANCES_JSON} found, skipping DNS file wait"
 fi
 
-log "Generating dnsmasq.conf"
-cat > "${CONF}" <<EOF
+generate_dnsmasq_conf() {
+    cat > "${CONF}" <<EOF
 no-resolv
 cache-size=150
 server=${MULLVAD_DNS}
 EOF
 
-if [ -f "${INSTANCES_JSON}" ]; then
+    if [ ! -f "${INSTANCES_JSON}" ]; then
+        log "WARNING: No ${INSTANCES_JSON} found. Mullvad-only DNS."
+        return 0
+    fi
+
     for row in $(jq -c '.[]' "${INSTANCES_JSON}"); do
         local_name=$(echo "$row" | jq -r '.name')
-        local_ip=$(echo "$row" | jq -r '.ip')
         local_domains=$(echo "$row" | jq -r '.dns_domains[]' 2>/dev/null)
         local_dns_file="/shared/${local_name}-dns-ip"
 
@@ -89,8 +92,10 @@ if [ -f "${INSTANCES_JSON}" ]; then
             log "  ${domain} -> ${local_dns} (via ${local_name})"
         done
     done
+}
 
-    log "Adding routes to VPN instances"
+add_instance_routes() {
+    [ -f "${INSTANCES_JSON}" ] || return 0
     for row in $(jq -c '.[]' "${INSTANCES_JSON}"); do
         local_ip=$(echo "$row" | jq -r '.ip')
         local_name=$(echo "$row" | jq -r '.name')
@@ -100,20 +105,21 @@ if [ -f "${INSTANCES_JSON}" ]; then
                 log "  route: ${cidr} already exists or failed"
         done
     done
-else
-    log "WARNING: No ${INSTANCES_JSON} found. Mullvad-only DNS."
-fi
+}
+
+log "Generating dnsmasq.conf"
+generate_dnsmasq_conf
+
+log "Adding routes to VPN instances"
+add_instance_routes
 
 log "Default DNS: ${MULLVAD_DNS}"
 log "Config:"
 cat "${CONF}"
 
-log "Starting dnsmasq"
-dnsmasq --no-daemon --log-queries --conf-file="${CONF}" &
-DNSMASQ_PID=$!
-log "dnsmasq PID=${DNSMASQ_PID}"
-
-trap 'kill -TERM "${DNSMASQ_PID}" 2>/dev/null; exit 0' TERM INT
+RELOAD_FLAG="/run/dnsmasq.reload"
+SHUTDOWN_FLAG="/run/dnsmasq.shutdown"
+rm -f "${RELOAD_FLAG}" "${SHUTDOWN_FLAG}"
 
 snapshot_dns_files() {
     for f in /shared/*-dns-ip; do
@@ -122,23 +128,60 @@ snapshot_dns_files() {
     done
 }
 
+# Watcher: just sets a reload flag. The main shell owns dnsmasq.
 watch_dns_files() {
     last_state="$(snapshot_dns_files)"
-    while kill -0 "${DNSMASQ_PID}" 2>/dev/null; do
+    while [ ! -f "${SHUTDOWN_FLAG}" ]; do
         sleep 5
         new_state="$(snapshot_dns_files)"
         if [ "${new_state}" != "${last_state}" ]; then
-            log "DNS-IP file change detected; flushing dnsmasq cache (SIGHUP)"
-            kill -HUP "${DNSMASQ_PID}" 2>/dev/null || true
-            if flush_gluetun_dns; then
-                log "Gluetun DNS cache flushed (stop/start cycle)"
-            else
-                log "WARNING: failed to flush gluetun DNS cache"
-            fi
+            log "DNS-IP file change detected"
+            touch "${RELOAD_FLAG}"
             last_state="${new_state}"
         fi
     done
 }
 
 watch_dns_files &
-wait "${DNSMASQ_PID}"
+WATCHER_PID=$!
+
+trap 'touch "${SHUTDOWN_FLAG}"; kill -TERM "${DNSMASQ_PID}" 2>/dev/null; kill "${WATCHER_PID}" 2>/dev/null; exit 0' TERM INT
+
+# Main loop: run dnsmasq in foreground; respawn on reload-flag or unexpected exit.
+while [ ! -f "${SHUTDOWN_FLAG}" ]; do
+    log "Starting dnsmasq"
+    dnsmasq --no-daemon --log-queries --conf-file="${CONF}" &
+    DNSMASQ_PID=$!
+    log "dnsmasq PID=${DNSMASQ_PID}"
+
+    # Poll: exit wait if dnsmasq dies OR a reload was requested.
+    while kill -0 "${DNSMASQ_PID}" 2>/dev/null; do
+        if [ -f "${RELOAD_FLAG}" ]; then
+            rm -f "${RELOAD_FLAG}"
+            log "Reload requested; regenerating dnsmasq.conf and restarting dnsmasq"
+            generate_dnsmasq_conf
+            kill -TERM "${DNSMASQ_PID}" 2>/dev/null || true
+            wait "${DNSMASQ_PID}" 2>/dev/null || true
+            if flush_gluetun_dns; then
+                log "Gluetun DNS cache flushed (stop/start cycle)"
+            else
+                log "WARNING: failed to flush gluetun DNS cache"
+            fi
+            break
+        fi
+        sleep 2
+    done
+
+    # If shutting down, exit; else loop respawns dnsmasq.
+    [ -f "${SHUTDOWN_FLAG}" ] && break
+
+    # If dnsmasq exited on its own (no reload flag), wait briefly to avoid tight loop.
+    if [ ! -f "${RELOAD_FLAG}" ] && ! kill -0 "${DNSMASQ_PID}" 2>/dev/null; then
+        wait "${DNSMASQ_PID}" 2>/dev/null
+        rc=$?
+        log "dnsmasq exited (rc=${rc}); respawning in 2s"
+        sleep 2
+    fi
+done
+
+kill "${WATCHER_PID}" 2>/dev/null || true
