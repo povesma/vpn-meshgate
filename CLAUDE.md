@@ -49,7 +49,27 @@ extraordinary action — never use it without explicit user
 confirmation. Default deploys must use `./deploy-push.sh` (no
 flags) which prompts before overwriting any protected file.
 
+## Writing style for this file
+
+Be concise. Minimum words, full meaning. No filler, no examples
+unless they prevent a real ambiguity.
+
 ## Secrets Policy
+
+### No reading secret files without per-turn permission
+
+Never read contents of `.env`, `.env.*`, `secrets/**` (except
+`*.example`), or any file named `*secret*`/`*credential*`/
+`*password*`/`*token*`/`*key*`/`*psk*`. Applies to Read, Edit
+preflight, and Bash content-revealing commands (`cat`, `grep`,
+`head`, `tail`, `awk`, `sed`, `source`, `env`, `xxd`, etc).
+
+If a value is needed: ask the user to paste it, or ask
+permission naming the file. Permission expires at end of turn.
+
+Storage permission (below) ≠ read permission.
+
+### Storage rules
 
 Secrets (passwords, API keys, private keys, PSKs, setup keys,
 tokens) MUST only exist in files that are universally and
