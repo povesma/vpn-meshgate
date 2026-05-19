@@ -104,3 +104,19 @@
     ntfy "Down" notification arrives, container logs show reconnect
     attempt, ppp0 comes back, ntfy "Up" notification with downtime.
   - [X] 7.3 Commit: `l2tp/entrypoint.sh`, `docker-compose.yml`.
+
+- [X] **8.0 User Story:** As an operator, I want l2tp reconnects to
+  recover from a stuck default route (`dev ppp0` left over after
+  tunnel loss), so that the reconnect loop is not blocked by an
+  unreachable bootstrap DNS resolver. (Discovered 2026-05-19 during
+  Story 009 work: after one normal disconnect, 53 retry attempts all
+  failed because `setup_routing` had replaced the default with
+  `dev ppp0` and reconnect tried to query 1.1.1.1 with no working
+  default route.)
+  - [X] 8.1 In `l2tp/entrypoint.sh`, add an `ensure_bootstrap_route`
+    step at the top of the reconnect loop that replaces the default
+    route with `via 172.29.0.1 dev eth0` whenever the current default
+    is not via the docker gateway [verify: manual-run-claude]
+      → reproduced live: after artec-vpn ran 53 failed retries, a
+        single `compose restart` restored the route; new code makes
+        this self-healing on subsequent failures [live] (2026-05-19)

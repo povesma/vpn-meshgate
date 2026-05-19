@@ -328,7 +328,16 @@ trap 'log "SIGTERM received, shutting down"; cleanup_stale_state; exit 0' TERM I
 
 configure
 
+ensure_bootstrap_route() {
+    if ! ip route show default 2>/dev/null | grep -q 'via 172.29.0.1'; then
+        ip route replace default via 172.29.0.1 dev eth0 2>/dev/null && \
+            log "Restored bootstrap default route via 172.29.0.1 (eth0)" || \
+            log "WARNING: failed to restore bootstrap default route"
+    fi
+}
+
 while true; do
+    ensure_bootstrap_route
     if ! resolve_gateway; then
         backoff_sleep
         continue
