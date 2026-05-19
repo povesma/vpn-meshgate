@@ -122,6 +122,35 @@ setup_dns_proxy() {
     echo "${eth_ip}" > "/shared/${INSTANCE}-dns-ip"
 }
 
+export_routes_loop() {
+    local out="/shared/${INSTANCE}-netbird-routes"
+    local tmp="${out}.tmp"
+    while :; do
+        if export_routes > "${tmp}" 2>/dev/null; then
+            mv "${tmp}" "${out}"
+        else
+            rm -f "${tmp}"
+        fi
+        sleep 30
+    done
+}
+
+export_routes() {
+    netbird networks ls 2>/dev/null | awk '
+        /^  - ID:/            { selected=0; in_ips=0; next }
+        /^    Status: Selected/ { selected=1; next }
+        /^    Resolved IPs: -/ { in_ips=0; next }
+        /^    Resolved IPs:/   { in_ips=1; next }
+        /^    [A-Z]/           { in_ips=0; next }
+        selected && in_ips {
+            n=split($0, a, ":")
+            ip=a[n]
+            gsub(/[ \t]/, "", ip)
+            if (ip ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) print ip
+        }
+    ' | sort -u
+}
+
 monitor_wt0() {
     while ip link show wt0 >/dev/null 2>&1; do
         sleep 10
@@ -130,7 +159,7 @@ monitor_wt0() {
 
 # === Main ===
 
-trap 'log "SIGTERM received, shutting down"; cleanup_iptables; kill "${NB_PID}" 2>/dev/null || true; exit 0' TERM INT
+trap 'log "SIGTERM received, shutting down"; rm -f "/shared/${INSTANCE}-netbird-routes" "/shared/${INSTANCE}-netbird-routes.tmp"; cleanup_iptables; kill "${NB_PID}" "${EXPORT_PID:-}" 2>/dev/null || true; exit 0' TERM INT
 
 configure
 
@@ -143,6 +172,9 @@ NB_PID=$!
 if wait_for_wt0; then
     setup_routing
     setup_dns_proxy
+    export_routes_loop &
+    EXPORT_PID=$!
+    log "Route export loop started (PID ${EXPORT_PID})"
     notify "${INSTANCE} VPN Up" "Netbird connected."
     log "Initial connection established"
 
