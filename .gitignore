@@ -38,3 +38,7 @@ claude-mem-*.md
 
 # RLM state
 .claude/rlm_state/
+
+# Python bytecode
+__pycache__/
+*.pyc

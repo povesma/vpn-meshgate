@@ -1,6 +1,6 @@
 #!/bin/sh
 
-log() { echo "[route-init] $*"; }
+log() { echo "[route-init] $*" >&2; }
 
 # Route Tailscale WireGuard/STUN traffic directly via host, bypassing Mullvad.
 # Tailscale marks these packets with fwmark 0x80000. Without this bypass,
@@ -188,10 +188,125 @@ update_domain_routes() {
     echo "${next_sleep}"
 }
 
-log "Starting domain routing loop (TTL-aware, min=${MIN_POLL}s, max=${MAX_POLL}s)"
+NETBIRD_ROUTE_SYNC="${NETBIRD_ROUTE_SYNC:-1}"
+NETBIRD_STATE_DIR="/tmp/netbird-routes"
+NETBIRD_STALE_FACTOR=2
+
+mkdir -p "${NETBIRD_STATE_DIR}"
+
+is_owned_by_other() {
+    local ip_cidr="$1" self="$2"
+    # Static cidrs and route_domains both lay down rules at priority
+    # 100. We detect a clash by checking the existing rule; if one
+    # exists and is not our own, treat as foreign-owned and skip.
+    local existing
+    existing=$(ip rule show to "${ip_cidr}" 2>/dev/null | head -1)
+    if [ -n "${existing}" ]; then
+        if [ ! -f "${NETBIRD_STATE_DIR}/${self}.routes" ] || \
+           ! grep -qxF "${ip_cidr}" "${NETBIRD_STATE_DIR}/${self}.routes"; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
+apply_netbird_route() {
+    local ip="$1" gw="$2"
+    local cidr="${ip}/32"
+    ip route replace "${cidr}" via "${gw}" dev eth0 2>/dev/null || return 1
+    ip rule del to "${cidr}" lookup main priority 100 2>/dev/null || true
+    ip rule add to "${cidr}" lookup main priority 100 2>/dev/null || true
+    iptables -C VPN-INSTANCE-OUT -o eth0 -d "${cidr}" -j ACCEPT 2>/dev/null || \
+        iptables -A VPN-INSTANCE-OUT -o eth0 -d "${cidr}" -j ACCEPT 2>/dev/null || true
+    iptables -C VPN-INSTANCE-IN -i eth0 -s "${cidr}" -j ACCEPT 2>/dev/null || \
+        iptables -A VPN-INSTANCE-IN -i eth0 -s "${cidr}" -j ACCEPT 2>/dev/null || true
+    iptables -t nat -C POSTROUTING -d "${cidr}" -o eth0 -j MASQUERADE 2>/dev/null || \
+        iptables -t nat -A POSTROUTING -d "${cidr}" -o eth0 -j MASQUERADE 2>/dev/null || true
+    return 0
+}
+
+remove_netbird_route() {
+    local ip="$1" gw="$2"
+    local cidr="${ip}/32"
+    ip route del "${cidr}" via "${gw}" dev eth0 2>/dev/null || true
+    ip rule del to "${cidr}" lookup main priority 100 2>/dev/null || true
+    iptables -D VPN-INSTANCE-OUT -o eth0 -d "${cidr}" -j ACCEPT 2>/dev/null || true
+    iptables -D VPN-INSTANCE-IN -i eth0 -s "${cidr}" -j ACCEPT 2>/dev/null || true
+    iptables -t nat -D POSTROUTING -d "${cidr}" -o eth0 -j MASQUERADE 2>/dev/null || true
+}
+
+update_netbird_routes() {
+    [ "${NETBIRD_ROUTE_SYNC}" = "1" ] || return 0
+
+    local poll_interval="$1"
+    local stale_age=$(( poll_interval * NETBIRD_STALE_FACTOR ))
+    local now
+    now=$(date +%s)
+
+    for row in $(jq -c '.[] | select(.type == "netbird")' "${INSTANCES_JSON}"); do
+        local name ip producer_file state_file
+        name=$(echo "$row" | jq -r '.name')
+        ip=$(echo "$row" | jq -r '.ip')
+        producer_file="/shared/${name}-netbird-routes"
+        state_file="${NETBIRD_STATE_DIR}/${name}.routes"
+
+        if [ ! -f "${producer_file}" ]; then
+            if [ -f "${state_file}" ]; then
+                local state_mtime
+                state_mtime=$(stat -c %Y "${state_file}" 2>/dev/null || echo "${now}")
+                if [ $(( now - state_mtime )) -gt "${stale_age}" ]; then
+                    log "  netbird/${name}: producer missing > ${stale_age}s; removing tracked routes"
+                    while read -r old_ip; do
+                        [ -n "${old_ip}" ] && remove_netbird_route "${old_ip}" "${ip}"
+                    done < "${state_file}"
+                    rm -f "${state_file}"
+                else
+                    log "  netbird/${name}: producer missing (grace period)"
+                fi
+            fi
+            continue
+        fi
+
+        local file_mtime
+        file_mtime=$(stat -c %Y "${producer_file}" 2>/dev/null || echo "${now}")
+        if [ $(( now - file_mtime )) -gt "${stale_age}" ]; then
+            log "  netbird/${name}: producer stale (age $(( now - file_mtime ))s > ${stale_age}s); leaving routes untouched"
+            continue
+        fi
+
+        local current_ips previous_ips
+        current_ips=$(sort -u "${producer_file}" 2>/dev/null)
+        previous_ips=""
+        [ -f "${state_file}" ] && previous_ips=$(cat "${state_file}")
+
+        for new_ip in ${current_ips}; do
+            if ! echo "${previous_ips}" | grep -qxF "${new_ip}"; then
+                if is_owned_by_other "${new_ip}/32" "${name}"; then
+                    log "  netbird/${name}: ${new_ip} owned by another source, skip"
+                    continue
+                fi
+                if apply_netbird_route "${new_ip}" "${ip}"; then
+                    log "  netbird/${name}: +route ${new_ip} via ${ip}"
+                fi
+            fi
+        done
+
+        for old_ip in ${previous_ips}; do
+            if ! echo "${current_ips}" | grep -qxF "${old_ip}"; then
+                remove_netbird_route "${old_ip}" "${ip}"
+                log "  netbird/${name}: -route ${old_ip}"
+            fi
+        done
+
+        echo "${current_ips}" > "${state_file}"
+    done
+}
+
+log "Starting routing loop (domain TTL-aware + netbird poller)"
 
 while true; do
     sleep_interval=$(update_domain_routes)
-    log "Domain routes updated. Next resolve in ${sleep_interval}s"
+    update_netbird_routes "${sleep_interval}"
+    log "Routes updated. Next cycle in ${sleep_interval}s"
     sleep "${sleep_interval}"
 done

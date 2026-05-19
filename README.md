@@ -134,6 +134,13 @@ overlay network CIDR (e.g. `10.75.0.0/16`) in `cidrs`. Add company
 domains to `dns_domains` — Netbird's DNS resolver handles the
 domain-to-IP routing automatically via the gateway peer.
 
+For netbird-type instances, route-init also auto-syncs the
+destinations netbird has resolved into host-level routes
+(`/shared/<name>-netbird-routes`), so traffic from Tailscale exit-
+node clients reaches them through the netbird tunnel. To disable
+this sync (rollback): set `NETBIRD_ROUTE_SYNC=0` in the route-init
+service env and restart route-init.
+
 ### 3. Generate Docker Compose Override
 
 ```bash
