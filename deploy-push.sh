@@ -173,4 +173,6 @@ rsync "${RSYNC_FLAGS[@]}" \
     "$SCRIPT_DIR/" "$REMOTE_HOST:$REMOTE_PATH"
 
 echo "✓ Sync complete."
-[[ $DRY_RUN -eq 1 ]] && echo "  Run without --dry-run to actually transfer files."
+if [[ $DRY_RUN -eq 1 ]]; then
+    echo "  Run without --dry-run to actually transfer files."
+fi
