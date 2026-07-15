@@ -39,6 +39,9 @@ claude-mem-*.md
 # RLM state
 .claude/rlm_state/
 
+# Session capture logs (embo capture hook)
+/tmp/
+
 # Python bytecode
 __pycache__/
 *.pyc
