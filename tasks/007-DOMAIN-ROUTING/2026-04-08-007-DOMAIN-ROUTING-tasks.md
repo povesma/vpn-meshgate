@@ -133,17 +133,17 @@
     the default route to `ppp0` (`ip route replace default
     dev ppp0`) [verify: code-only]
     → verified via e2e traceroute [live] (2026-04-11)
-  - [~] 5b.2 In `wireguard/entrypoint.sh` `setup_routing()`:
+  - [X] 5b.2 In `wireguard/entrypoint.sh` `setup_routing()`:
     after `wg0` is up, extract the endpoint IP from
     `wg show wg0 endpoints`, pin it via `eth0`, change
     default route to `wg0` [verify: code-only]
     → verified via e2e traceroute [live] (2026-04-11)
-  - [~] 5b.3 In `openvpn/entrypoint.sh` `setup_routing()`:
+  - [X] 5b.3 In `openvpn/entrypoint.sh` `setup_routing()`:
     after `tun0` is up, extract the remote server IP from
     `/etc/openvpn/client.conf`, pin it via `eth0`, change
     default route to `tun0` [verify: code-only]
     → verified via e2e traceroute [live] (2026-04-11)
-  - [~] 5b.4 In `netbird/entrypoint.sh` `setup_routing()`:
+  - [X] 5b.4 In `netbird/entrypoint.sh` `setup_routing()`:
     after `wt0` is up, resolve `NB_MANAGEMENT_URL` hostname
     to an IP, pin it via `eth0`, change default route to
     `wt0` [verify: code-only]
