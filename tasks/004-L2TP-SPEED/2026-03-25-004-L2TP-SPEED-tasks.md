@@ -107,9 +107,9 @@
     **Result**: 12 Mbps sender, 11.6 Mbps receiver. This is
     the hard ceiling for all traffic through the VPS.
 
-- [~] 7.0 **User Story**: As a developer, I want to apply
+- [X] 7.0 **User Story**: As a developer, I want to apply
   preventive L2TP fixes and commit all changes so the VPS-side
-  path is optimized [5/6]
+  path is optimized [6/6]
   - [X] 7.1 Apply Fix F0: add `tx bps = 100000000` and
     `rx bps = 100000000` to xl2tpd.conf in
     `l2tp/entrypoint.sh:70-79`.
@@ -120,8 +120,10 @@
   - [X] 7.4 Deploy to VPS, verify L2TP connection establishes
     and ppp0 is healthy.
     **Result**: All 3 fixes verified active. ppp0 UP.
-  - [ ] 7.5 Commit all changes: `gluetun/post-rules.txt` (MSS
+  - [X] 7.5 Commit all changes: `gluetun/post-rules.txt` (MSS
     clamping from Mar 23) + `l2tp/entrypoint.sh` (F0, F2, F3).
+    → F0/F2/F3 + post-rules MSS all in HEAD via later feature
+    commits; tree clean [live] (2026-07-15)
   - [X] 7.6 Route Tailscale control/WireGuard traffic directly to
     internet bypassing Mullvad. Persist fwmark routing (table 201,
     ip rule priority 100) and iptables bypass in config files so
