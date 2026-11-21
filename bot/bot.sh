@@ -62,8 +62,8 @@ cleanup_confirm() {
 
 mullvad_country_name() {
     case "$1" in
-        us) echo "United States" ;;
-        uk) echo "United Kingdom" ;;
+        us) echo "USA" ;;
+        uk) echo "UK" ;;
         nl) echo "Netherlands" ;;
         de) echo "Germany" ;;
         fr) echo "France" ;;
@@ -158,7 +158,7 @@ help - show this message" "low"
 }
 
 cmd_mullvad_list() {
-    reply "Mullvad Countries" "us=United States  uk=United Kingdom  nl=Netherlands
+    reply "Mullvad Countries" "us=US  uk=UK  nl=Netherlands
 de=Germany        fr=France          ch=Switzerland
 se=Sweden         fi=Finland         be=Belgium
 cy=Cyprus         ca=Canada          jp=Japan
