@@ -70,8 +70,11 @@
     sysctl `net.ipv4.conf.all.src_valid_mark=1` to gluetun
   - [X] 2.3 Mount gluetun volume for custom iptables rules
     at `/iptables/post-rules.txt` (empty file for now)
-  - [ ] 2.4 Verify: gluetun healthy, public IP is Mullvad,
-    not VPS IP. **IN PROGRESS** — re-testing from Mac client.
+  - [X] 2.4 Verify: gluetun healthy, public IP is Mullvad,
+    not VPS IP. Verified: gluetun Docker health
+    `healthy`; `am.i.mullvad.net/json` from the Mac client
+    returns `mullvad_exit_ip: true` with the same IP gluetun
+    reports.
 
 - [X] 3.0 **User Story:** As a developer, I want Tailscale to
   run as an exit node in gluetun's network namespace so that
@@ -86,10 +89,16 @@
     `cap_add: NET_ADMIN`, volume `ts-state`
   - [X] 3.2 Add `TS_ROUTES` env var support if needed for
     Headscale route advertisement
-  - [ ] 3.3 Verify: test client set exit-node=vpn-gate,
-    internet works via Mullvad IP. **IN PROGRESS**
-  - [ ] 3.4 Verify Tailscale mesh connectivity while exit
-    node active. **IN PROGRESS**
+  - [X] 3.3 Verify: test client set exit-node=vpn-gate,
+    internet works via Mullvad IP. Verified from
+    the Mac client: internet exit is a Mullvad WireGuard
+    server (`am.i.mullvad.net`), IP equals gluetun's.
+  - [X] 3.4 Verify Tailscale mesh connectivity while exit
+    node active. Verified: `tailscale ping` to
+    another tailnet node gets pongs; TCP to ntfy (:80) and
+    DNS to dnsmasq on the exit node succeed. Note: ICMP
+    `ping` to tailnet IPs times out — use `tailscale ping`
+    or TCP for this check.
 
 - [X] 4.0 **User Story:** As a developer, I want the L2TP/
   IPsec container to connect to the company VPN so that
@@ -112,8 +121,13 @@
     inline in entrypoint
   - [X] 4.5 Create `l2tp/entrypoint.sh`: writes DNS to
     `/shared/company-dns-ip`, routes COMPANY_CIDRS via ppp0
-  - [ ] 4.6 Verify: company network reachable from Mac
-    client via exit node. **IN PROGRESS**
+  - [X] 4.6 Verify: company network reachable from Mac
+    client via exit node. Verified: a company
+    host (resolved via split DNS) answers ICMP from the Mac.
+    Note: the instance's configured `check_ip` host is
+    unreachable even from inside the L2TP container (the
+    company router replies "Destination Host Unreachable") —
+    that host is gone, not a routing fault.
 
 - [X] 5.0 **User Story:** As a developer, I want policy
   routing to split `COMPANY_CIDRS` traffic to the L2TP
@@ -126,8 +140,11 @@
     `network_mode: service:gluetun`, `cap_add: NET_ADMIN`
   - [X] 5.3 Configure `FIREWALL_OUTBOUND_SUBNETS` in gluetun
     to include the bridge subnet
-  - [ ] 5.4 Verify split routing from Mac client: internet
-    via Mullvad, company via L2TP. **IN PROGRESS**
+  - [X] 5.4 Verify split routing from Mac client: internet
+    via Mullvad, company via L2TP. Verified:
+    internet exit is Mullvad (see 3.3); `traceroute` to a
+    company host goes exit node → L2TP container
+    (`<bridge>.101`) → L2TP peer → host.
 
 - [X] 6.0 **User Story:** As a developer, I want split DNS
   via dnsmasq so that company domain queries use company
@@ -142,9 +159,11 @@
     `DNS_UPSTREAM_RESOLVER_TYPE=plain` and
     `DNS_UPSTREAM_PLAIN_ADDRESSES=172.29.0.30:53` to forward
     DNS through dnsmasq.
-  - [ ] 6.4 Verify DNS split from Mac client: public
+  - [X] 6.4 Verify DNS split from Mac client: public
     domains resolve, company domains resolve to internal IPs.
-    **IN PROGRESS**
+    Verified: a company domain resolves to an
+    internal company-CIDR IP; `example.com` resolves to its
+    public IPs.
 
 - [X] 7.0 **User Story:** As a developer, I want health
   monitoring with ntfy push notifications so that I'm
