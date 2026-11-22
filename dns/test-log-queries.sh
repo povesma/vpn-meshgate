@@ -1,6 +1,8 @@
 #!/bin/sh
-# Unit test for dnsmasq_log_flag() in dns/entrypoint.sh.
-# Query logging must be off unless DNSMASQ_LOG_QUERIES=1.
+# Unit test for how dns/entrypoint.sh launches dnsmasq.
+# - Query logging must be off unless DNSMASQ_LOG_QUERIES=1.
+# - dnsmasq must not run in debug mode (--no-daemon): debug mode handles
+#   TCP queries in the main process, so one stalled TCP client blocks all DNS.
 # Run from repo root: sh dns/test-log-queries.sh
 
 set -u
@@ -26,8 +28,41 @@ load_function() {
     assert_eq "dnsmasq_log_flag is defined in entrypoint.sh" "yes" "${defined}"
 }
 
+launch_line() {
+    grep -E '^[[:space:]]*dnsmasq --' "${SRC}"
+}
+
+test_launch_line_exists() {
+    if [ -n "$(launch_line)" ]; then found=yes; else found=no; fi
+    assert_eq "dnsmasq launch line found in entrypoint.sh" "yes" "${found}"
+}
+
+test_launch_line_not_debug_mode() {
+    case "$(launch_line)" in
+        *--no-daemon*|*" -d "*) debug=yes ;;
+        *) debug=no ;;
+    esac
+    assert_eq "dnsmasq is not started in debug mode (--no-daemon)" "no" "${debug}"
+}
+
+test_launch_line_stays_in_foreground() {
+    case "$(launch_line)" in
+        *--keep-in-foreground*) fg=yes ;;
+        *) fg=no ;;
+    esac
+    assert_eq "dnsmasq is started with --keep-in-foreground" "yes" "${fg}"
+}
+
+test_launch_line_logs_to_stderr() {
+    case "$(launch_line)" in
+        *--log-facility=-*) stderr=yes ;;
+        *) stderr=no ;;
+    esac
+    assert_eq "dnsmasq logs to stderr (--log-facility=-)" "yes" "${stderr}"
+}
+
 test_launch_line_has_no_hardcoded_flag() {
-    launch="$(grep -E '^[[:space:]]*dnsmasq --no-daemon' "${SRC}")"
+    launch="$(launch_line)"
     case "${launch}" in
         *--log-queries*) hardcoded=yes ;;
         *) hardcoded=no ;;
@@ -56,7 +91,8 @@ test_one_is_on() {
 }
 
 load_function
-for t in test_launch_line_has_no_hardcoded_flag test_unset_is_off test_zero_is_off test_other_value_is_off test_one_is_on; do
+for t in test_launch_line_exists test_launch_line_not_debug_mode test_launch_line_stays_in_foreground \
+    test_launch_line_logs_to_stderr test_launch_line_has_no_hardcoded_flag test_unset_is_off test_zero_is_off test_other_value_is_off test_one_is_on; do
     "${t}"
 done
 

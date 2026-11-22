@@ -156,8 +156,10 @@ trap 'touch "${SHUTDOWN_FLAG}"; kill -TERM "${DNSMASQ_PID}" 2>/dev/null; kill "$
 # Main loop: run dnsmasq in foreground; respawn on reload-flag or unexpected exit.
 while [ ! -f "${SHUTDOWN_FLAG}" ]; do
     log "Starting dnsmasq"
+    # --keep-in-foreground, not --no-daemon: --no-daemon is debug mode, which serves
+    # TCP queries in the main process, so one stalled TCP client blocks all DNS.
     # shellcheck disable=SC2046
-    dnsmasq --no-daemon $(dnsmasq_log_flag) --conf-file="${CONF}" &
+    dnsmasq --keep-in-foreground --log-facility=- $(dnsmasq_log_flag) --conf-file="${CONF}" &
     DNSMASQ_PID=$!
     log "dnsmasq PID=${DNSMASQ_PID}"
 
