@@ -7,6 +7,8 @@
 - [.env.example](.env.example) :: Documented environment variable template (committed to git)
 - [.gitignore](.gitignore) :: Git ignore rules (`.env`, volumes, etc.)
 - [docker-compose.yml](docker-compose.yml) :: Main Docker Compose stack definition
+- [dns/entrypoint.sh](dns/entrypoint.sh) :: Generates dnsmasq.conf, runs dnsmasq (query logging opt-in via `DNSMASQ_LOG_QUERIES`)
+- [dns/test-log-queries.sh](dns/test-log-queries.sh) :: Unit test for the dnsmasq query-logging switch (`sh dns/test-log-queries.sh`)
 - [gluetun/post-rules.sh](gluetun/post-rules.sh) :: Script to generate iptables rules from `COMPANY_CIDRS`
 - [l2tp/Dockerfile](l2tp/Dockerfile) :: Custom Alpine image with strongSwan + xl2tpd
 - [l2tp/entrypoint.sh](l2tp/entrypoint.sh) :: Generates configs from env vars, starts VPN, extracts DNS
@@ -164,7 +166,8 @@
     Verified: a company domain resolves to an
     internal company-CIDR IP; `example.com` resolves to its
     public IPs.
-  - [ ] 6.5 Stop dnsmasq from hanging on its log output.
+  - [~] 6.5 Stop dnsmasq from hanging on its log output.
+    [verify: docker]
     Incident: the dnsmasq process stayed alive but stopped
     answering (blocked in a pipe write, `wait_woken`) after
     ~24k `--log-queries` lines in 90 min; all tailnet DNS
@@ -175,6 +178,10 @@
     `dig @127.0.0.1` inside the container and from a tailnet
     client via the exit node; `docker logs dnsmasq` no
     longer grows per query.
+    → `DNSMASQ_LOG_QUERIES` (default 0) gates `--log-queries`;
+    `sh dns/test-log-queries.sh`: 6 passed, 0 failed [live]
+    → pending: deploy + dnsmasq rebuild on the VPS, then the
+    live checks above
 
 - [X] 7.0 **User Story:** As a developer, I want health
   monitoring with ntfy push notifications so that I'm

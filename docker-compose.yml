@@ -83,6 +83,8 @@ services:
     container_name: dnsmasq
     cap_add:
       - NET_ADMIN
+    environment:
+      - DNSMASQ_LOG_QUERIES=${DNSMASQ_LOG_QUERIES:-0}
     networks:
       bridge_vpn:
         ipv4_address: 172.29.0.30

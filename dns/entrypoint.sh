@@ -8,6 +8,12 @@ GLUETUN_DNS_API="${GLUETUN_DNS_API:-http://172.29.0.10:8000/v1/dns/status}"
 
 log() { echo "[dnsmasq] $*"; }
 
+# Per-query logging can block dnsmasq on a full stdout pipe, so it is opt-in.
+dnsmasq_log_flag() {
+    [ "${DNSMASQ_LOG_QUERIES:-0}" = "1" ] && echo "--log-queries"
+    return 0
+}
+
 flush_gluetun_dns() {
     curl -sf --max-time 3 -X PUT \
         -H 'Content-Type: application/json' \
@@ -150,7 +156,8 @@ trap 'touch "${SHUTDOWN_FLAG}"; kill -TERM "${DNSMASQ_PID}" 2>/dev/null; kill "$
 # Main loop: run dnsmasq in foreground; respawn on reload-flag or unexpected exit.
 while [ ! -f "${SHUTDOWN_FLAG}" ]; do
     log "Starting dnsmasq"
-    dnsmasq --no-daemon --log-queries --conf-file="${CONF}" &
+    # shellcheck disable=SC2046
+    dnsmasq --no-daemon $(dnsmasq_log_flag) --conf-file="${CONF}" &
     DNSMASQ_PID=$!
     log "dnsmasq PID=${DNSMASQ_PID}"
 
