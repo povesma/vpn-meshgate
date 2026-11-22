@@ -8,7 +8,7 @@
 - [.gitignore](.gitignore) :: Git ignore rules (`.env`, volumes, etc.)
 - [docker-compose.yml](docker-compose.yml) :: Main Docker Compose stack definition
 - [dns/entrypoint.sh](dns/entrypoint.sh) :: Generates dnsmasq.conf, runs dnsmasq (query logging opt-in via `DNSMASQ_LOG_QUERIES`)
-- [dns/test-log-queries.sh](dns/test-log-queries.sh) :: Unit test for the dnsmasq query-logging switch (`sh dns/test-log-queries.sh`)
+- [dns/test-log-queries.sh](dns/test-log-queries.sh) :: Unit test for how dnsmasq is launched: not debug mode, query-logging switch (`sh dns/test-log-queries.sh`)
 - [gluetun/post-rules.sh](gluetun/post-rules.sh) :: Script to generate iptables rules from `COMPANY_CIDRS`
 - [l2tp/Dockerfile](l2tp/Dockerfile) :: Custom Alpine image with strongSwan + xl2tpd
 - [l2tp/entrypoint.sh](l2tp/entrypoint.sh) :: Generates configs from env vars, starts VPN, extracts DNS
@@ -150,7 +150,7 @@
 
 - [X] 6.0 **User Story:** As a developer, I want split DNS
   via dnsmasq so that company domain queries use company
-  DNS and everything else uses Mullvad DNS (REQ-05) [5/5]
+  DNS and everything else uses Mullvad DNS (REQ-05) [6/6]
   - [X] 6.1 Create `dns/Dockerfile`: Alpine + dnsmasq +
     bind-tools + iproute2
   - [X] 6.2 Create `dns/entrypoint.sh`: waits for company
@@ -166,24 +166,35 @@
     Verified: a company domain resolves to an
     internal company-CIDR IP; `example.com` resolves to its
     public IPs.
-  - [X] 6.5 Stop dnsmasq from hanging on its log output.
+  - [X] 6.5 Make dnsmasq per-query logging opt-in
+    (`DNSMASQ_LOG_QUERIES`, default off) to cut log volume.
     [verify: docker]
-    Incident: the dnsmasq process stayed alive but stopped
-    answering (blocked in a pipe write, `wait_woken`) after
-    ~24k `--log-queries` lines in 90 min; all tailnet DNS
-    failed and gluetun restarted its tunnel in a loop until
-    the container was recreated. Fix: drop `--log-queries`
-    from `dns/entrypoint.sh` (or make it opt-in via an env
-    var, default off). Verify: dnsmasq answers
-    `dig @127.0.0.1` inside the container and from a tailnet
-    client via the exit node; `docker logs dnsmasq` no
-    longer grows per query.
+    Note: this was first believed to be the cause of the
+    dnsmasq hang; it was not — the hang recurred with logging
+    off. Real cause and fix: 6.6.
     → `DNSMASQ_LOG_QUERIES` (default 0) gates `--log-queries`;
-    `sh dns/test-log-queries.sh`: 6 passed, 0 failed [live]
-    → deployed and rebuilt: dnsmasq runs without
-    `--log-queries`, answers locally and via the exit node
-    (public and company domains), log shows startup lines
-    only, container healthy [live]
+    unit test passes [live]
+    → deployed: dnsmasq runs without `--log-queries` and the
+    log shows startup lines only [live]
+  - [X] 6.6 Stop one stalled TCP DNS client from hanging
+    dnsmasq. [verify: docker]
+    Incident (twice): dnsmasq stayed alive but answered no
+    queries; all tailnet DNS failed and gluetun restarted its
+    tunnel in a loop until dnsmasq was recreated. Cause:
+    `--no-daemon` is dnsmasq's debug mode, which serves TCP
+    queries in the main process instead of a forked child.
+    The main process was blocked reading an accepted TCP
+    connection from the tailnet side (`wait_woken`), with the
+    TCP accept queue full. Fix: start dnsmasq with
+    `--keep-in-foreground --log-facility=-` (foreground, not
+    debug mode, logs to stderr). Verify: with a TCP client
+    connected to port 53 and sending nothing, UDP queries to
+    dnsmasq still answer, locally and via the exit node.
+    → launch-line unit tests: 10 passed, 0 failed [live]
+    → deployed: dnsmasq runs with `--keep-in-foreground` as
+    the unprivileged dnsmasq user; while a silent TCP
+    connection was held open on port 53, UDP queries still
+    answered locally and via the exit node [live]
 
 - [X] 7.0 **User Story:** As a developer, I want health
   monitoring with ntfy push notifications so that I'm

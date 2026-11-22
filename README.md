@@ -276,6 +276,7 @@ nslookup example.com                    # resolved via public DNS
 | `NTFY_TOPIC` | ntfy notification topic (default: `vpn-alerts`) |
 | `NTFY_CMD_TOPIC` | ntfy command topic (default: `vpn-cmd`) |
 | `GLUETUN_API_KEY` | Gluetun API key |
+| `VPN_DNS_DOMAINS` | Hostnames (`*.domain` allowed) gluetun may resolve to private/tailnet IPs; include all `dns_domains` and any public name pointing at a tailnet IP |
 | `DNSMASQ_LOG_QUERIES` | `1` logs every DNS query in `docker compose logs dnsmasq` (debugging only; default `0`) |
 
 ### `secrets/vpn-instances.yaml` — VPN Instance Config
