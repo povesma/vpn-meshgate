@@ -148,9 +148,9 @@
     company host goes exit node → L2TP container
     (`<bridge>.101`) → L2TP peer → host.
 
-- [ ] 6.0 **User Story:** As a developer, I want split DNS
+- [X] 6.0 **User Story:** As a developer, I want split DNS
   via dnsmasq so that company domain queries use company
-  DNS and everything else uses Mullvad DNS (REQ-05) [4/5]
+  DNS and everything else uses Mullvad DNS (REQ-05) [5/5]
   - [X] 6.1 Create `dns/Dockerfile`: Alpine + dnsmasq +
     bind-tools + iproute2
   - [X] 6.2 Create `dns/entrypoint.sh`: waits for company
@@ -166,7 +166,7 @@
     Verified: a company domain resolves to an
     internal company-CIDR IP; `example.com` resolves to its
     public IPs.
-  - [~] 6.5 Stop dnsmasq from hanging on its log output.
+  - [X] 6.5 Stop dnsmasq from hanging on its log output.
     [verify: docker]
     Incident: the dnsmasq process stayed alive but stopped
     answering (blocked in a pipe write, `wait_woken`) after
@@ -180,8 +180,10 @@
     longer grows per query.
     → `DNSMASQ_LOG_QUERIES` (default 0) gates `--log-queries`;
     `sh dns/test-log-queries.sh`: 6 passed, 0 failed [live]
-    → pending: deploy + dnsmasq rebuild on the VPS, then the
-    live checks above
+    → deployed and rebuilt: dnsmasq runs without
+    `--log-queries`, answers locally and via the exit node
+    (public and company domains), log shows startup lines
+    only, container healthy [live]
 
 - [X] 7.0 **User Story:** As a developer, I want health
   monitoring with ntfy push notifications so that I'm
