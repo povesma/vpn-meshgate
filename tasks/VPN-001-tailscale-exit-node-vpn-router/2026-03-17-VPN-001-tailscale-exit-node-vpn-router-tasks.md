@@ -146,9 +146,9 @@
     company host goes exit node → L2TP container
     (`<bridge>.101`) → L2TP peer → host.
 
-- [X] 6.0 **User Story:** As a developer, I want split DNS
+- [ ] 6.0 **User Story:** As a developer, I want split DNS
   via dnsmasq so that company domain queries use company
-  DNS and everything else uses Mullvad DNS (REQ-05) [4/4]
+  DNS and everything else uses Mullvad DNS (REQ-05) [4/5]
   - [X] 6.1 Create `dns/Dockerfile`: Alpine + dnsmasq +
     bind-tools + iproute2
   - [X] 6.2 Create `dns/entrypoint.sh`: waits for company
@@ -164,6 +164,17 @@
     Verified: a company domain resolves to an
     internal company-CIDR IP; `example.com` resolves to its
     public IPs.
+  - [ ] 6.5 Stop dnsmasq from hanging on its log output.
+    Incident: the dnsmasq process stayed alive but stopped
+    answering (blocked in a pipe write, `wait_woken`) after
+    ~24k `--log-queries` lines in 90 min; all tailnet DNS
+    failed and gluetun restarted its tunnel in a loop until
+    the container was recreated. Fix: drop `--log-queries`
+    from `dns/entrypoint.sh` (or make it opt-in via an env
+    var, default off). Verify: dnsmasq answers
+    `dig @127.0.0.1` inside the container and from a tailnet
+    client via the exit node; `docker logs dnsmasq` no
+    longer grows per query.
 
 - [X] 7.0 **User Story:** As a developer, I want health
   monitoring with ntfy push notifications so that I'm
