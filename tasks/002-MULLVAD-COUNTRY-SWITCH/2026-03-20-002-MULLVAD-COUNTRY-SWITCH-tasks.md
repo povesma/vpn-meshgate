@@ -35,6 +35,13 @@
   `rdocker.sh compose up -d --force-recreate gluetun vpn-bot`.
 - After switcher changes: `deploy-push.sh` then
   `rdocker.sh compose up -d --build --force-recreate mullvad-switcher`.
+- Country names passed to `SERVER_COUNTRIES` must match gluetun's
+  Mullvad server list exactly (`USA` and `UK`, not "United States" /
+  "United Kingdom"). Check with
+  `rdocker.sh exec gluetun ./gluetun-entrypoint format-servers -mullvad`.
+- Geo-IP services may place a Mullvad server in a different country than
+  Mullvad lists it (a US/Dallas server was located in Japan). The switch
+  selects by Mullvad's listing; sites see the geo-IP country.
 
 ## Tasks
 

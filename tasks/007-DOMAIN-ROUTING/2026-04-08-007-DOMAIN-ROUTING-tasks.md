@@ -149,9 +149,9 @@
     `wt0` [verify: code-only]
     → verified via e2e traceroute [live] (2026-04-11)
 
-- [X] 5c.0 **User Story:** As a VPN user, I want DNS to bypass
+- [ ] 5c.0 **User Story:** As a VPN user, I want DNS to bypass
   gluetun's rebinding protection so that all domains (including
-  CNAME chains) resolve correctly for domain-based routing [5/5]
+  CNAME chains) resolve correctly for domain-based routing [5/6]
   - [X] 5c.1 In `docker-compose.yml`, enable gluetun HTTP
     control server on `127.0.0.1:8000` with
     `auth: none` (localhost-only, no auth needed)
@@ -170,6 +170,22 @@
     `auth = "none"` role for DNS endpoints
     [verify: manual-run-user]
     → gluetun DNS stopped successfully [live] (2026-04-12)
+  - [ ] 5c.6 Keep gluetun's DNS server stopped after a dnsmasq
+    reload. `flush_gluetun_dns()` in `dns/entrypoint.sh` flushes
+    gluetun's cache by setting its DNS status to `stopped` and
+    then `running`, which turns gluetun DNS (and its rebinding
+    protection) back on until route-init next stops it.
+    Observed: the exit node's own resolver (used for DNS of
+    Tailscale clients that select this exit node) was gluetun
+    DNS and returned REFUSED for a host whose public record is
+    a tailnet (CGNAT) IP; recreating gluetun restored dnsmasq.
+    Interim mitigation: the host was added to
+    `VPN_DNS_DOMAINS` (gluetun's rebinding exemption list).
+    Fix: leave gluetun DNS stopped after the flush (or drop the
+    flush, since gluetun DNS should not be serving at all).
+    [verify: docker] Verify: after a dnsmasq reload, gluetun
+    DNS on `127.0.0.1:53` is not answering and the exit node
+    resolves a CGNAT-IP host via dnsmasq.
 
 - [X] 6.0 **User Story:** As a VPN user, I want to deploy and
   verify domain-based routing end-to-end so that the feature

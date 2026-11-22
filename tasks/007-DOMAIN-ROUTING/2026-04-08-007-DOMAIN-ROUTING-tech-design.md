@@ -341,9 +341,9 @@ split DNS but routing is already handled by CIDRs.
 - `netbird/entrypoint.sh` — pin management server route via
   eth0, change default route to wt0 in `setup_routing()`
 
-- `docker-compose.yml` — enable gluetun HTTP control server,
-  remove `DNS_REBINDING_PROTECTION_EXEMPT_HOSTNAMES`
-- `.env.example` — remove `VPN_DNS_DOMAINS`
+- `docker-compose.yml` — enable gluetun HTTP control server;
+  `DNS_REBINDING_PROTECTION_EXEMPT_HOSTNAMES` kept (see below)
+- `.env.example` — `VPN_DNS_DOMAINS` kept (see below)
 
 **No changes needed**:
 - `dns/entrypoint.sh` — dnsmasq config unaffected
@@ -390,9 +390,19 @@ issues. No CDN IP mismatch.
    to stop gluetun's DNS server
 3. `gluetun/init-routes.sh`: resolve via dnsmasq directly
    (`DNS_SERVER=172.29.0.30`)
-4. `.env.example`: remove `VPN_DNS_DOMAINS` (no longer needed)
-5. `docker-compose.yml`: remove
-   `DNS_REBINDING_PROTECTION_EXEMPT_HOSTNAMES` (no longer needed)
+4. ~~`.env.example`: remove `VPN_DNS_DOMAINS`~~ — **kept.**
+5. ~~`docker-compose.yml`: remove
+   `DNS_REBINDING_PROTECTION_EXEMPT_HOSTNAMES`~~ — **kept**
+   (task 5c.2), fed from `VPN_DNS_DOMAINS`.
+
+**Current state**: the exemption list is still needed as a
+fallback. gluetun's DNS server can be running even though
+route-init stops it at startup (a dnsmasq reload restarts it,
+see task 5c.6). While it runs, it is the exit node's own
+resolver, which answers DNS for Tailscale clients that use
+this exit node, and it refuses any name that resolves to a
+private or CGNAT (100.64.0.0/10) address unless that name is
+in `VPN_DNS_DOMAINS` (comma-separated, `*.domain` allowed).
 
 **Why this is safe**: Gluetun uses hardcoded IPs for VPN server
 connections (no DNS needed). Gluetun's health check uses its
